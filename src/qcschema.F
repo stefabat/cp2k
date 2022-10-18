@@ -6,20 +6,29 @@
 !--------------------------------------------------------------------------------------------------!
 
 ! **************************************************************************************************
-!> \brief The types defining the QCSchema
+!> \brief The module to read/write QCSchema JSON files for itnerfacing CP2K with other programs
 !> \par History
 !>      10.2022 created [SB]
 !> \author SB
 ! **************************************************************************************************
-MODULE qcschema_types
+MODULE qcschema
 
-   USE kinds,                           ONLY: dp
+   USE kinds,                          ONLY: dp,default_string_length
+   USE json_module,                    ONLY: json_core, json_value
+
+   USE cp2k_info,                      ONLY: cp2k_version
+
+
+   USE qs_environment_types,           ONLY: get_qs_env,&
+                                             qs_environment_type
+
+
 
    IMPLICIT NONE
 
    PRIVATE
 
-   CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qcschema_types'
+   CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
 
 ! **************************************************************************************************
@@ -28,9 +37,9 @@ MODULE qcschema_types
 !>        https://molssi-qc-schema.readthedocs.io/en/latest/spec_components.html#provenance
 ! **************************************************************************************************
    TYPE qcschema_provenance
-      CHARACTER(len=*)     :: creator ! The name of the creator of this object
-      CHARACTER(len=*)     :: version ! The version of the creator of this object
-      CHARACTER(len=*)     :: routine ! The routine that was used to create this object
+      CHARACTER(LEN=default_string_length) :: creator ! The name of the creator of this object
+      CHARACTER(LEN=default_string_length) :: version ! The version of the creator of this object
+      CHARACTER(LEN=default_string_length) :: routine ! The routine that was used to create this object
    END TYPE qcschema_provenance
 
 
@@ -41,10 +50,10 @@ MODULE qcschema_types
 ! **************************************************************************************************
    TYPE qcschema_topology
       ! The list of atom symbols in this topology
-      CHARACTER(len=*), DIMENSION(:), ALLOCATABLE  :: symbols
-      ! The XYZ coordinates (in Bohr units) of the atoms
-      REAL(KIND=dp),  DIMENSION(:,:), ALLOCATABLE  :: geometry
-      CHARACTER(len=*)                             :: schema_name    ! The name of this schema
+      CHARACTER(LEN=2), DIMENSION(:), ALLOCATABLE  :: symbols
+      ! The XYZ coordinates (in Bohr) of the atoms as a flat array (row major order)
+      REAL(KIND=dp),  DIMENSION(:), ALLOCATABLE    :: geometry
+      CHARACTER(LEN=default_string_length)         :: schema_name    ! The name of this schema
       INTEGER                                      :: schema_version ! The version of this specific schema
       INTEGER                                      :: molecular_charge
       INTEGER                                      :: molecular_multiplicity
@@ -56,26 +65,26 @@ MODULE qcschema_types
       ! A list indicating the bonds between the atoms in the molecule. Each item of this list must be
       ! a tuple of three integers, indicating the first atom index in the bond, the second atom index,
       ! and finally the order of the bond
-      INTEGER, DIMENSION(:,3), ALLOCATABLE         :: connectivity
+      INTEGER, DIMENSION(:,:), ALLOCATABLE         :: connectivity
       ! Whether rotation of the geometry is allowed (`False`) or not (`True`)
       LOGICAL                                      :: fix_orientation
       ! A list of user-provided information for each atom. Its length must match that of the `symbols` list
-      CHARACTER(len=*), DIMENSION(:), ALLOCATABLE  :: atom_labels
+      CHARACTER(LEN=8), DIMENSION(:), ALLOCATABLE  :: atom_labels
       ! The list of multiplicities associated with each fragment
       INTEGER, DIMENSION(:), ALLOCATABLE           :: fragment_multiplicities
       ! The maximal point group symmetry at which the `geometry` should be treated
-      CHARACTER(len=*)                             :: fix_symmetry
+      CHARACTER(LEN=default_string_length)         :: fix_symmetry
       ! The list of charges associated with each fragment
       INTEGER, DIMENSION(:), ALLOCATABLE           :: fragment_charges
       ! The mass numbers of all atoms. If it is an unknown isotope, the value should be -1.
       ! Its length must match that of the `symbols` list
       INTEGER, DIMENSION(:), ALLOCATABLE           :: mass_numbers
       ! The (user-given) name of the molecule
-      CHARACTER(len=*)                             :: name
+      CHARACTER(LEN=default_string_length)         :: name
       ! The masses (in au) of all atoms. Canonical weights are assumed if this is not given explicitly
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: masses
       ! Any additional (user-provided) comment
-      CHARACTER(len=*)                             :: comment
+      CHARACTER(LEN=default_string_length)         :: comment
       ! An instance of :class:`QCProvenance`
       TYPE(qcschema_provenance)                    :: provenance
       ! The list of fragments. Each item of this list must be a tuple of integers with variable
@@ -97,7 +106,7 @@ MODULE qcschema_types
       ! The angular momenta of this electron shell as a list of integers
       INTEGER, DIMENSION(:), ALLOCATABLE           :: angular_momentum
       ! The type of this shell: spherical or cartesian
-      CHARACTER(LEN=*)                             :: harmonic_type
+      CHARACTER(LEN=9)                             :: harmonic_type
       ! The exponents of this contracted shell. The official spec stores these values as strings
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: exponents
       ! The general contraction coefficients of this contracted shell
@@ -112,7 +121,7 @@ MODULE qcschema_types
 ! **************************************************************************************************
    TYPE qcschema_ecp
       ! The type of this potential
-      CHARACTER(LEN=*)                             :: ecp_type
+      CHARACTER(LEN=default_string_length)         :: ecp_type
       ! The angular momenta of this potential as a list of integers
       INTEGER, DIMENSION(:), ALLOCATABLE           :: angular_momentum
       ! The exponents of the r terms
@@ -148,7 +157,7 @@ MODULE qcschema_types
 ! **************************************************************************************************
    TYPE qcschema_basis_set
       ! The name of the basis set
-      CHARACTER(LEN=*)                             :: name
+      CHARACTER(LEN=default_string_length)         :: name
       ! A dictionary mapping the keys provided by `atom_map` to their basis center data
       TYPE(qcschema_center_basis), DIMENSION(:), ALLOCATABLE &
       :: center_data
@@ -157,13 +166,13 @@ MODULE qcschema_types
       ! entry for atomic kind. E.g. only one entry for hydrogen even though there might be
       ! many hydrogen atoms in the molecule. If this is the case, then we really need a
       ! hash table for `center_data`
-      CHARACTER(LEN=*), DIMENSION(:), ALLOCATABLE  :: atom_map
+      CHARACTER(LEN=2), DIMENSION(:), ALLOCATABLE  :: atom_map
       ! The version of this specific schema
       INTEGER                                      :: schema_version
       ! The name of this schema. This value is expected to be `qcschema_basis`
-      CHARACTER(LEN=*)                             :: schema_name
+      CHARACTER(LEN=default_string_length)         :: schema_name
       ! A description of this basis set
-      CHARACTER(LEN=*)                             :: description
+      CHARACTER(LEN=default_string_length)         :: description
    END TYPE qcschema_basis_set
 
 
@@ -180,25 +189,25 @@ MODULE qcschema_types
 
       ! These are supposedly the "names" of the quantities even
       ! though I don't understand why do we need them
-      CHARACTER(LEN=*)                             :: orbitals_a
-      CHARACTER(LEN=*)                             :: orbitals_b
-      CHARACTER(LEN=*)                             :: density_a
-      CHARACTER(LEN=*)                             :: density_b
-      CHARACTER(LEN=*)                             :: density_mo_a
-      CHARACTER(LEN=*)                             :: density_mo_b
-      CHARACTER(LEN=*)                             :: fock_a
-      CHARACTER(LEN=*)                             :: fock_b
-      CHARACTER(LEN=*)                             :: fock_mo_a
-      CHARACTER(LEN=*)                             :: fock_mo_b
-      CHARACTER(LEN=*)                             :: eigenvalues_a
-      CHARACTER(LEN=*)                             :: eigenvalues_b
-      CHARACTER(LEN=*)                             :: occupations_a
-      CHARACTER(LEN=*)                             :: occupations_b
-      CHARACTER(LEN=*)                             :: eri
-      CHARACTER(LEN=*)                             :: eri_mo_aa
-      CHARACTER(LEN=*)                             :: eri_mo_ab
-      CHARACTER(LEN=*)                             :: eri_mo_ba
-      CHARACTER(LEN=*)                             :: eri_mo_bb
+      CHARACTER(LEN=default_string_length)         :: orbitals_a
+      CHARACTER(LEN=default_string_length)         :: orbitals_b
+      CHARACTER(LEN=default_string_length)         :: density_a
+      CHARACTER(LEN=default_string_length)         :: density_b
+      CHARACTER(LEN=default_string_length)         :: density_mo_a
+      CHARACTER(LEN=default_string_length)         :: density_mo_b
+      CHARACTER(LEN=default_string_length)         :: fock_a
+      CHARACTER(LEN=default_string_length)         :: fock_b
+      CHARACTER(LEN=default_string_length)         :: fock_mo_a
+      CHARACTER(LEN=default_string_length)         :: fock_mo_b
+      CHARACTER(LEN=default_string_length)         :: eigenvalues_a
+      CHARACTER(LEN=default_string_length)         :: eigenvalues_b
+      CHARACTER(LEN=default_string_length)         :: occupations_a
+      CHARACTER(LEN=default_string_length)         :: occupations_b
+      CHARACTER(LEN=default_string_length)         :: eri
+      CHARACTER(LEN=default_string_length)         :: eri_mo_aa
+      CHARACTER(LEN=default_string_length)         :: eri_mo_ab
+      CHARACTER(LEN=default_string_length)         :: eri_mo_ba
+      CHARACTER(LEN=default_string_length)         :: eri_mo_bb
 
       ! SCF quantities in AO or MO basis
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_a
@@ -253,52 +262,140 @@ MODULE qcschema_types
 ! **************************************************************************************************
    TYPE qcschema_properties
 
-   INTEGER :: calcinfo_nbasis
-   INTEGER :: calcinfo_nmo
-   INTEGER :: calcinfo_nalpha ! # of alpha electrons
-   INTEGER :: calcinfo_nbeta  ! # of beta electrons
-   INTEGER :: calcinfo_natom
-   REAL(KIND=dp) :: return_energy
+      INTEGER :: calcinfo_nbasis
+      INTEGER :: calcinfo_nmo
+      INTEGER :: calcinfo_nalpha ! # of alpha electrons
+      INTEGER :: calcinfo_nbeta  ! # of beta electrons
+      INTEGER :: calcinfo_natom
+      REAL(KIND=dp) :: return_energy
 
-   ! SCF energies
-   REAL(KIND=dp) :: scf_one_electron_energy
-   REAL(KIND=dp) :: scf_two_electron_energy
-   REAL(KIND=dp) :: nuclear_repulsion_energy
-   REAL(KIND=dp) :: scf_vv10_energy
-   REAL(KIND=dp) :: scf_xc_energy
-   REAL(KIND=dp) :: scf_dispersion_correction_energy
-   REAL(KIND=dp) :: scf_total_energy
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: scf_dipole_moment
-   INTEGER :: scf_iterations
+      ! SCF energies
+      REAL(KIND=dp) :: scf_one_electron_energy
+      REAL(KIND=dp) :: scf_two_electron_energy
+      REAL(KIND=dp) :: nuclear_repulsion_energy
+      REAL(KIND=dp) :: scf_vv10_energy
+      REAL(KIND=dp) :: scf_xc_energy
+      REAL(KIND=dp) :: scf_dispersion_correction_energy
+      REAL(KIND=dp) :: scf_total_energy
+      REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment
+      INTEGER :: scf_iterations
 
-   REAL(KIND=dp) :: mp2_same_spin_correlation_energy
-   REAL(KIND=dp) :: mp2_opposite_spin_correlation_energy
-   REAL(KIND=dp) :: mp2_singles_energy
-   REAL(KIND=dp) :: mp2_doubles_energy
-   REAL(KIND=dp) :: mp2_correlation_energy
-   REAL(KIND=dp) :: mp2_total_energy
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: mp2_dipole_moment
+      REAL(KIND=dp) :: mp2_same_spin_correlation_energy
+      REAL(KIND=dp) :: mp2_opposite_spin_correlation_energy
+      REAL(KIND=dp) :: mp2_singles_energy
+      REAL(KIND=dp) :: mp2_doubles_energy
+      REAL(KIND=dp) :: mp2_correlation_energy
+      REAL(KIND=dp) :: mp2_total_energy
+      REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment
 
-   REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
-   REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
-   REAL(KIND=dp) :: ccsd_singles_energy
-   REAL(KIND=dp) :: ccsd_doubles_energy
-   REAL(KIND=dp) :: ccsd_correlation_energy
-   REAL(KIND=dp) :: ccsd_total_energy
-   REAL(KIND=dp) :: ccsd_prt_pr_correlation_energy
-   REAL(KIND=dp) :: ccsd_prt_pr_total_energy
-   REAL(KIND=dp) :: ccsdt_correlation_energy
-   REAL(KIND=dp) :: ccsdt_total_energy
-   REAL(KIND=dp) :: ccsdtq_correlation_energy
-   REAL(KIND=dp) :: ccsdtq_total_energy
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: ccsd_dipole_moment
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: ccsd_prt_pr_dipole_moment
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: ccsdt_dipole_moment
-   REAL(KIND=dp), DIMENSION(3), ALLOCATABLE :: ccsdtq_dipole_moment
-   INTEGER :: ccsd_iterations: int | None = None
-   INTEGER :: ccsdt_iterations: int | None = None
-   INTEGER :: ccsdtq_iterations: int | None = None
+      REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
+      REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
+      REAL(KIND=dp) :: ccsd_singles_energy
+      REAL(KIND=dp) :: ccsd_doubles_energy
+      REAL(KIND=dp) :: ccsd_correlation_energy
+      REAL(KIND=dp) :: ccsd_total_energy
+      REAL(KIND=dp) :: ccsd_prt_pr_correlation_energy
+      REAL(KIND=dp) :: ccsd_prt_pr_total_energy
+      REAL(KIND=dp) :: ccsdt_correlation_energy
+      REAL(KIND=dp) :: ccsdt_total_energy
+      REAL(KIND=dp) :: ccsdtq_correlation_energy
+      REAL(KIND=dp) :: ccsdtq_total_energy
+      REAL(KIND=dp), DIMENSION(3) :: ccsd_dipole_moment
+      REAL(KIND=dp), DIMENSION(3) :: ccsd_prt_pr_dipole_moment
+      REAL(KIND=dp), DIMENSION(3) :: ccsdt_dipole_moment
+      REAL(KIND=dp), DIMENSION(3) :: ccsdtq_dipole_moment
+      INTEGER :: ccsd_iterations
+      INTEGER :: ccsdt_iterations
+      INTEGER :: ccsdtq_iterations
 
    END TYPE qcschema_properties
 
-END MODULE qcschema_types
+
+! **************************************************************************************************
+!> \brief The full QCSchema output type.
+!>        For more information refer to:
+!>        https://molssi-qc-schema.readthedocs.io/en/latest/spec_components.html#output-components
+! **************************************************************************************************
+   TYPE qcschema_type
+      TYPE(qcschema_provenance)   :: provenance
+      TYPE(qcschema_properties)   :: properties
+      TYPE(qcschema_wavefunction) :: wavefunction
+      ! The primary result of the computation
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE :: return_result
+      ! Whether the computation was successful
+      LOGICAL :: success
+   END TYPE qcschema_type
+
+
+   CONTAINS
+
+
+   SUBROUTINE qcschema_env_initialize(qcschema_env, qs_env)
+      TYPE(qcschema_type)                                :: qcschema_env
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+
+
+
+   END SUBROUTINE qcschema_env_initialize
+
+
+   ! SUBROUTINE qcschema_env_release
+   ! END SUBROUTINE qcschema_env_release
+
+! Write to json. write only if quantities exist
+   SUBROUTINE qcschema_to_json(qcschema_env)
+      ! TYPE(qs_environment_type), POINTER :: qs_env
+      TYPE(qcschema_type), POINTER :: qcschema_env
+      TYPE(json_core)              :: json
+      TYPE(json_value), POINTER    :: root
+      INTEGER :: handle
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
+
+      CALL timeset(routineN, handle)
+
+      CALL json%initialize()
+      CALL json%create_object(root,'')
+
+
+
+      CALL timestop(handle)
+   END SUBROUTINE qcschema_to_json
+
+
+   SUBROUTINE to_json(qs_env)
+      TYPE(qs_environment_type), POINTER :: qs_env
+      TYPE(json_core)                    :: json
+      TYPE(json_value), POINTER          :: root, provenance
+      INTEGER :: handle
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
+
+      CALL timeset(routineN, handle)
+
+      CALL json%initialize()
+      CALL json%create_object(root,'')
+
+      ! success
+      ! TODO: how to check if the calculation was succesful?
+      CALL json%add(root, 'success', .true.)
+
+      ! QCSchema provenanve
+      CALL json%create_object(provenance, 'provenance')
+      CALL json%add(root, provenance)
+      CALL json%add(provenance, 'creator', 'CP2K')
+      CALL json%add(provenance, 'version', cp2k_version)
+      CALL json%add(provenance, 'routine', 'to_json')
+      NULLIFY (provenance)
+
+      ! QCSchema properties
+      CALL json%create_object(properties, 'properties')
+      CALL json%add(root, properties)
+
+
+
+      CALL timestop(handle)
+   END SUBROUTINE to_json
+
+
+END MODULE qcschema
