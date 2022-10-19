@@ -6,22 +6,27 @@
 !--------------------------------------------------------------------------------------------------!
 
 ! **************************************************************************************************
-!> \brief The module to read/write QCSchema JSON files for itnerfacing CP2K with other programs
+!> \brief The module to read/write QCSchema JSON files for interfacing CP2K with other programs
 !> \par History
 !>      10.2022 created [SB]
 !> \author SB
 ! **************************************************************************************************
 MODULE qcschema
 
-   USE kinds,                          ONLY: dp,default_string_length
-   USE json_module,                    ONLY: json_core, json_value
-
+   ! USE json_module,                    ONLY: json_core, json_value
    USE cp2k_info,                      ONLY: cp2k_version
-
-
+   USE cp_control_types,               ONLY: dft_control_type
+   USE cp_log_handling,                ONLY: cp_get_default_logger,&
+                                             cp_logger_get_default_io_unit,&
+                                             cp_logger_type
+   USE kinds,                          ONLY: dp,default_string_length
+   USE particle_types,                 ONLY: particle_type
+   USE qs_mo_types,                    ONLY: mo_set_p_type
+   USE qs_scf_types,                   ONLY: qs_scf_env_type
+   USE qs_energy_types,                ONLY: qs_energy_type
    USE qs_environment_types,           ONLY: get_qs_env,&
                                              qs_environment_type
-
+#include "./base/base_uses.f90"
 
 
    IMPLICIT NONE
@@ -30,6 +35,8 @@ MODULE qcschema
 
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
+   PUBLIC :: qcschema_type
+   PUBLIC :: qcschema_env_create
 
 ! **************************************************************************************************
 !> \brief A derived type to store the program information that generated the QCSchema file.
@@ -262,24 +269,26 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_properties
 
-      INTEGER :: calcinfo_nbasis
-      INTEGER :: calcinfo_nmo
-      INTEGER :: calcinfo_nalpha ! # of alpha electrons
-      INTEGER :: calcinfo_nbeta  ! # of beta electrons
-      INTEGER :: calcinfo_natom
-      REAL(KIND=dp) :: return_energy
+      REAL(KIND=dp) :: return_energy = 0.0_dp
 
-      ! SCF energies
-      REAL(KIND=dp) :: scf_one_electron_energy
-      REAL(KIND=dp) :: scf_two_electron_energy
-      REAL(KIND=dp) :: nuclear_repulsion_energy
-      REAL(KIND=dp) :: scf_vv10_energy
-      REAL(KIND=dp) :: scf_xc_energy
-      REAL(KIND=dp) :: scf_dispersion_correction_energy
-      REAL(KIND=dp) :: scf_total_energy
+      INTEGER :: calcinfo_nbasis = 0
+      INTEGER :: calcinfo_nmo    = 0
+      INTEGER :: calcinfo_nalpha = 0 ! # of alpha electrons
+      INTEGER :: calcinfo_nbeta  = 0 ! # of beta electrons
+      INTEGER :: calcinfo_natom  = 0
+
+      ! SCF results
+      INTEGER :: scf_iterations = 0
+      REAL(KIND=dp) :: scf_one_electron_energy          = 0.0_dp
+      REAL(KIND=dp) :: scf_two_electron_energy          = 0.0_dp
+      REAL(KIND=dp) :: nuclear_repulsion_energy         = 0.0_dp
+      ! REAL(KIND=dp) :: scf_vv10_energy                  = 0.0_dp
+      REAL(KIND=dp) :: scf_xc_energy                    = 0.0_dp
+      REAL(KIND=dp) :: scf_dispersion_correction_energy = 0.0_dp
+      REAL(KIND=dp) :: scf_total_energy                 = 0.0_dp
       REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment
-      INTEGER :: scf_iterations
 
+      ! MP2 results
       REAL(KIND=dp) :: mp2_same_spin_correlation_energy
       REAL(KIND=dp) :: mp2_opposite_spin_correlation_energy
       REAL(KIND=dp) :: mp2_singles_energy
@@ -288,25 +297,26 @@ MODULE qcschema
       REAL(KIND=dp) :: mp2_total_energy
       REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment
 
-      REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
-      REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
-      REAL(KIND=dp) :: ccsd_singles_energy
-      REAL(KIND=dp) :: ccsd_doubles_energy
-      REAL(KIND=dp) :: ccsd_correlation_energy
-      REAL(KIND=dp) :: ccsd_total_energy
-      REAL(KIND=dp) :: ccsd_prt_pr_correlation_energy
-      REAL(KIND=dp) :: ccsd_prt_pr_total_energy
-      REAL(KIND=dp) :: ccsdt_correlation_energy
-      REAL(KIND=dp) :: ccsdt_total_energy
-      REAL(KIND=dp) :: ccsdtq_correlation_energy
-      REAL(KIND=dp) :: ccsdtq_total_energy
-      REAL(KIND=dp), DIMENSION(3) :: ccsd_dipole_moment
-      REAL(KIND=dp), DIMENSION(3) :: ccsd_prt_pr_dipole_moment
-      REAL(KIND=dp), DIMENSION(3) :: ccsdt_dipole_moment
-      REAL(KIND=dp), DIMENSION(3) :: ccsdtq_dipole_moment
-      INTEGER :: ccsd_iterations
-      INTEGER :: ccsdt_iterations
-      INTEGER :: ccsdtq_iterations
+      ! do we really need CC stuff?
+      ! REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
+      ! REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
+      ! REAL(KIND=dp) :: ccsd_singles_energy
+      ! REAL(KIND=dp) :: ccsd_doubles_energy
+      ! REAL(KIND=dp) :: ccsd_correlation_energy
+      ! REAL(KIND=dp) :: ccsd_total_energy
+      ! REAL(KIND=dp) :: ccsd_prt_pr_correlation_energy
+      ! REAL(KIND=dp) :: ccsd_prt_pr_total_energy
+      ! REAL(KIND=dp) :: ccsdt_correlation_energy
+      ! REAL(KIND=dp) :: ccsdt_total_energy
+      ! REAL(KIND=dp) :: ccsdtq_correlation_energy
+      ! REAL(KIND=dp) :: ccsdtq_total_energy
+      ! REAL(KIND=dp), DIMENSION(3) :: ccsd_dipole_moment
+      ! REAL(KIND=dp), DIMENSION(3) :: ccsd_prt_pr_dipole_moment
+      ! REAL(KIND=dp), DIMENSION(3) :: ccsdt_dipole_moment
+      ! REAL(KIND=dp), DIMENSION(3) :: ccsdtq_dipole_moment
+      ! INTEGER :: ccsd_iterations
+      ! INTEGER :: ccsdt_iterations
+      ! INTEGER :: ccsdtq_iterations
 
    END TYPE qcschema_properties
 
@@ -330,72 +340,151 @@ MODULE qcschema
    CONTAINS
 
 
-   SUBROUTINE qcschema_env_initialize(qcschema_env, qs_env)
+! **************************************************************************************************
+!> \brief Create and initialize a qcschema environment
+!> \param qcschema_env the qcschema environment to populate
+!> \param qs_env the qs environment with all the info of the computation
+! **************************************************************************************************
+   SUBROUTINE qcschema_env_create(qcschema_env, qs_env)
       TYPE(qcschema_type)                                :: qcschema_env
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      TYPE(qs_energy_type), POINTER                      :: energy
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(cp_logger_type), POINTER                      :: logger
 
+      INTEGER :: handle, output_unit, nspins, nalpha, nbeta, natom, nbasis, nmo
+      REAL(KIND=dp) :: one_el_en, two_el_en, dispersion
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
+      CALL timeset(routineN, handle)
 
-   END SUBROUTINE qcschema_env_initialize
+      logger => cp_get_default_logger()
+      output_unit = cp_logger_get_default_io_unit(logger)
+
+      ! Collect environment info
+      IF (ASSOCIATED(qs_env)) THEN
+         CALL get_qs_env(qs_env, dft_control=dft_control, energy=energy, &
+                         mos=mos, particle_set=particle_set, scf_env=scf_env)
+      ELSE
+         ! print something and quit
+         RETURN
+      END IF
+
+      ! success
+      ! TODO: how to check if the calculation was succesful?
+      qcschema_env%success = .true.
+
+      ! QCSchema provenanve
+      qcschema_env%provenance%creator = 'CP2K'
+      qcschema_env%provenance%version = cp2k_version
+      qcschema_env%provenance%routine = routineN
+
+      ! basis functions info
+      nbasis = mos(1)%mo_set%nao
+      nmo    = mos(1)%mo_set%nmo
+      natom  = SIZE(particle_set)
+      ! restricted or unrestricted calculation?
+      nspins = SIZE(mos)
+      IF (nspins == 1) THEN
+         nalpha = mos(1)%mo_set%nelectron/2
+         nbeta  = nalpha
+      ELSE
+         nalpha = mos(1)%mo_set%nelectron
+         nbeta  = mos(2)%mo_set%nelectron
+      END IF
+
+      ! QCSchema properties
+      qcschema_env%properties%calcinfo_nbasis = nbasis
+      qcschema_env%properties%calcinfo_nmo    = nmo
+      qcschema_env%properties%calcinfo_natom  = natom
+      qcschema_env%properties%calcinfo_nalpha = nalpha
+      qcschema_env%properties%calcinfo_nbeta  = nbeta
+      qcschema_env%properties%return_energy   = energy%total
+
+      ! SCF iterations
+      qcschema_env%properties%scf_iterations = scf_env%iter_count
+
+      ! one-electron energy is the sum of all core terms
+      one_el_en = energy%core_overlap + energy%core_self + energy%core
+      qcschema_env%properties%scf_two_electron_energy = one_el_en
+      ! two-electron energy is the sum of hartree and exact exchange (if there)
+      two_el_en = energy%hartree + energy%ex + energy%hartree_1c
+      qcschema_env%properties%scf_one_electron_energy = two_el_en
+      ! xc energy
+      qcschema_env%properties%scf_xc_energy = &
+      energy%exc + energy%exc_aux_fit + energy%exc1 + energy%exc1_aux_fit
+      ! dispersion energy
+      dispersion = energy%dispersion + energy%gcp
+      qcschema_env%properties%scf_dispersion_correction_energy = dispersion
+      ! qcschema_env%properties%scf_vv10_energy
+
+      qcschema_env%properties%scf_total_energy = energy%total
+
+      ! Some features of CP2K are not supported by QCSchema, let's warn the user
+      IF (dft_control%smear) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: smearing not supported in QCSchema'
+      END IF
+      IF (dft_control%dft_plus_u) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: DFT+U not supported in QCSchema'
+      END IF
+      IF (dft_control%do_sccs) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: SCCS not supported in QCSchema'
+      END IF
+      IF (qs_env%qmmm) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: QM/MM not supported in QCSchema'
+      END IF
+      IF (dft_control%qs_control%mulliken_restraint) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: Mulliken restrains not supported in QCSchema'
+      END IF
+      IF (dft_control%qs_control%semi_empirical) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: semi_empirical methods not supported in QCSchema'
+      END IF
+      IF (dft_control%qs_control%dftb) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: DFTB not supported in QCSchema'
+      END IF
+      IF (dft_control%qs_control%xtb) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' WARNING: xTB not supported in QCSchema'
+      END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE qcschema_env_create
 
 
    ! SUBROUTINE qcschema_env_release
    ! END SUBROUTINE qcschema_env_release
 
 ! Write to json. write only if quantities exist
-   SUBROUTINE qcschema_to_json(qcschema_env)
-      ! TYPE(qs_environment_type), POINTER :: qs_env
-      TYPE(qcschema_type), POINTER :: qcschema_env
-      TYPE(json_core)              :: json
-      TYPE(json_value), POINTER    :: root
-      INTEGER :: handle
+   ! SUBROUTINE qcschema_to_json(qcschema_env)
+   !    ! TYPE(qs_environment_type), POINTER :: qs_env
+   !    TYPE(qcschema_type), POINTER :: qcschema_env
+   !    TYPE(json_core)              :: json
+   !    TYPE(json_value), POINTER    :: root
+   !    INTEGER :: handle
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
+   !    CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
 
-      CALL timeset(routineN, handle)
+   !    CALL timeset(routineN, handle)
 
-      CALL json%initialize()
-      CALL json%create_object(root,'')
-
-
-
-      CALL timestop(handle)
-   END SUBROUTINE qcschema_to_json
-
-
-   SUBROUTINE to_json(qs_env)
-      TYPE(qs_environment_type), POINTER :: qs_env
-      TYPE(json_core)                    :: json
-      TYPE(json_value), POINTER          :: root, provenance
-      INTEGER :: handle
-
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
-
-      CALL timeset(routineN, handle)
-
-      CALL json%initialize()
-      CALL json%create_object(root,'')
-
-      ! success
-      ! TODO: how to check if the calculation was succesful?
-      CALL json%add(root, 'success', .true.)
-
-      ! QCSchema provenanve
-      CALL json%create_object(provenance, 'provenance')
-      CALL json%add(root, provenance)
-      CALL json%add(provenance, 'creator', 'CP2K')
-      CALL json%add(provenance, 'version', cp2k_version)
-      CALL json%add(provenance, 'routine', 'to_json')
-      NULLIFY (provenance)
-
-      ! QCSchema properties
-      CALL json%create_object(properties, 'properties')
-      CALL json%add(root, properties)
+   !    CALL json%initialize()
+   !    CALL json%create_object(root,'')
 
 
 
-      CALL timestop(handle)
-   END SUBROUTINE to_json
+   !    CALL timestop(handle)
+   ! END SUBROUTINE qcschema_to_json
+
 
 
 END MODULE qcschema
