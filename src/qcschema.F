@@ -16,16 +16,22 @@ MODULE qcschema
    ! USE json_module,                    ONLY: json_core, json_value
    USE cp2k_info,                      ONLY: cp2k_version
    USE cp_control_types,               ONLY: dft_control_type
-   USE cp_log_handling,                ONLY: cp_get_default_logger,&
-                                             cp_logger_get_default_io_unit,&
+   USE cp_log_handling,                ONLY: cp_get_default_logger, &
+                                             cp_logger_get_default_io_unit, &
                                              cp_logger_type
-   USE kinds,                          ONLY: dp,default_string_length
+   USE kinds,                          ONLY: dp, default_string_length, &
+                                             default_path_length
+   USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
    USE qs_mo_types,                    ONLY: mo_set_p_type
    USE qs_scf_types,                   ONLY: qs_scf_env_type
    USE qs_energy_types,                ONLY: qs_energy_type
-   USE qs_environment_types,           ONLY: get_qs_env,&
+   USE qs_environment_types,           ONLY: get_qs_env, &
                                              qs_environment_type
+   USE hdf5,                           ONLY: h5open_f, h5close_f, &
+                                             h5fcreate_f, h5fopen_f, h5fclose_f, &
+                                             hid_t, h5f_acc_trunc_f
+
 #include "./base/base_uses.f90"
 
 
@@ -36,7 +42,7 @@ MODULE qcschema
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
    PUBLIC :: qcschema_type
-   PUBLIC :: qcschema_env_create
+   PUBLIC :: qcschema_env_create, qcschema_to_hdf5
 
 ! **************************************************************************************************
 !> \brief A derived type to store the program information that generated the QCSchema file.
@@ -286,16 +292,21 @@ MODULE qcschema
       REAL(KIND=dp) :: scf_xc_energy                    = 0.0_dp
       REAL(KIND=dp) :: scf_dispersion_correction_energy = 0.0_dp
       REAL(KIND=dp) :: scf_total_energy                 = 0.0_dp
-      REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment
+      ! the dipole moment is calculated on the fly and not stored,
+      ! so I just don't care about it
+      ! REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment  = 0.0_dp
 
       ! MP2 results
-      REAL(KIND=dp) :: mp2_same_spin_correlation_energy
-      REAL(KIND=dp) :: mp2_opposite_spin_correlation_energy
-      REAL(KIND=dp) :: mp2_singles_energy
-      REAL(KIND=dp) :: mp2_doubles_energy
-      REAL(KIND=dp) :: mp2_correlation_energy
-      REAL(KIND=dp) :: mp2_total_energy
-      REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment
+      REAL(KIND=dp) :: mp2_same_spin_correlation_energy     = 0.0_dp
+      REAL(KIND=dp) :: mp2_opposite_spin_correlation_energy = 0.0_dp
+      REAL(KIND=dp) :: mp2_singles_energy = 0.0_dp
+      REAL(KIND=dp) :: mp2_doubles_energy = 0.0_dp
+      ! these are the only two that are saved
+      REAL(KIND=dp) :: mp2_correlation_energy = 0.0_dp
+      REAL(KIND=dp) :: mp2_total_energy       = 0.0_dp
+      ! the dipole moment is calculated on the fly and not stored,
+      ! so I just don't care about it
+      ! REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment = 0.0_dp
 
       ! do we really need CC stuff?
       ! REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
@@ -354,6 +365,7 @@ MODULE qcschema
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mp2_type), POINTER                            :: mp2_env
 
       INTEGER :: handle, output_unit, nspins, nalpha, nbeta, natom, nbasis, nmo
       REAL(KIND=dp) :: one_el_en, two_el_en, dispersion
@@ -367,7 +379,8 @@ MODULE qcschema
       ! Collect environment info
       IF (ASSOCIATED(qs_env)) THEN
          CALL get_qs_env(qs_env, dft_control=dft_control, energy=energy, &
-                         mos=mos, particle_set=particle_set, scf_env=scf_env)
+                         mos=mos, particle_set=particle_set, scf_env=scf_env, &
+                         mp2_env=mp2_env)
       ELSE
          ! print something and quit
          RETURN
@@ -396,7 +409,9 @@ MODULE qcschema
          nbeta  = mos(2)%mo_set%nelectron
       END IF
 
-      ! QCSchema properties
+      ! *** QCSchema properties *** !
+
+      ! general info
       qcschema_env%properties%calcinfo_nbasis = nbasis
       qcschema_env%properties%calcinfo_nmo    = nmo
       qcschema_env%properties%calcinfo_natom  = natom
@@ -404,9 +419,8 @@ MODULE qcschema
       qcschema_env%properties%calcinfo_nbeta  = nbeta
       qcschema_env%properties%return_energy   = energy%total
 
-      ! SCF iterations
+      ! SCF info
       qcschema_env%properties%scf_iterations = scf_env%iter_count
-
       ! one-electron energy is the sum of all core terms
       one_el_en = energy%core_overlap + energy%core_self + energy%core
       qcschema_env%properties%scf_two_electron_energy = one_el_en
@@ -420,10 +434,10 @@ MODULE qcschema
       dispersion = energy%dispersion + energy%gcp
       qcschema_env%properties%scf_dispersion_correction_energy = dispersion
       ! qcschema_env%properties%scf_vv10_energy
-
+      ! remove the mp2 part, in case it's non-zero
       qcschema_env%properties%scf_total_energy = energy%total
 
-      ! Some features of CP2K are not supported by QCSchema, let's warn the user
+      ! Some methods of CP2K are not supported by QCSchema, let's warn the user
       IF (dft_control%smear) THEN
          WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
          ' WARNING: smearing not supported in QCSchema'
@@ -457,10 +471,54 @@ MODULE qcschema
          ' WARNING: xTB not supported in QCSchema'
       END IF
 
+      ! MP2 info
+      IF (ASSOCIATED(qs_env%mp2_env)) THEN
+         ! this info is actually computed, but not stored!
+         ! qcschema_env%properties%mp2_singles_energy       ! don't know what these are
+         ! qcschema_env%properties%mp2_doubles_energy       ! MP2 should be only this?
+         ! qcschema_env%properties%mp2_same_spin_correlation_energy
+         ! qcschema_env%properties%mp2_opposite_spin_correlation_energy
+
+         qcschema_env%properties%mp2_correlation_energy = energy%mp2
+         qcschema_env%properties%mp2_total_energy = energy%total
+
+         ! update the scf energy
+         qcschema_env%properties%scf_total_energy = energy%total - energy%mp2
+      END IF
+
       CALL timestop(handle)
 
    END SUBROUTINE qcschema_env_create
 
+
+   SUBROUTINE qcschema_to_hdf5()!qcschema_env, qs_env)
+      ! TYPE(qcschema_type)                                :: qcschema_env
+      ! TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_logger_type), POINTER          :: logger
+      INTEGER                                :: error, output_unit
+      INTEGER(KIND=hid_t)                    :: file_id
+      CHARACTER(LEN=default_path_length)     :: filename
+
+      logger => cp_get_default_logger()
+      output_unit = cp_logger_get_default_io_unit(logger)
+
+      ! initialize HDF5 Fortran API
+      CALL h5open_f(error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: initialization of HDF5 interface failed'
+         RETURN
+      ENDIF
+
+      filename = '/home/stefano/Downloads/test.hdf5'
+      CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
+
+      CALL h5fclose_f(file_id, error)
+
+      CALL h5close_f(error)
+
+
+   END SUBROUTINE qcschema_to_hdf5
 
    ! SUBROUTINE qcschema_env_release
    ! END SUBROUTINE qcschema_env_release
