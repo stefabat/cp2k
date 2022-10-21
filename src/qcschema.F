@@ -28,9 +28,16 @@ MODULE qcschema
    USE qs_energy_types,                ONLY: qs_energy_type
    USE qs_environment_types,           ONLY: get_qs_env, &
                                              qs_environment_type
-   USE hdf5,                           ONLY: h5open_f, h5close_f, &
-                                             h5fcreate_f, h5fopen_f, h5fclose_f, &
-                                             hid_t, h5f_acc_trunc_f
+   ! USE hdf5,                           ONLY: h5open_f, h5close_f, &
+   !                                           h5fcreate_f, h5fopen_f, h5fclose_f, &
+   !                                           h5screate_f, h5s_scalar_f, &
+   !                                           h5gcreate_f, &
+   !                                           h5acreate_f, &
+   !                                           h5t_native_hbool, &
+   !                                           h5t_native_int, &
+   !                                           hid_t, h5f_acc_trunc_f
+   USE hdf5
+   use h5lt
 
 #include "./base/base_uses.f90"
 
@@ -496,7 +503,7 @@ MODULE qcschema
       ! TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(cp_logger_type), POINTER          :: logger
       INTEGER                                :: error, output_unit
-      INTEGER(KIND=hid_t)                    :: file_id
+      INTEGER(KIND=hid_t)                    :: file_id, space_id, attr_id, group_id, str_type
       CHARACTER(LEN=default_path_length)     :: filename
 
       logger => cp_get_default_logger()
@@ -511,7 +518,33 @@ MODULE qcschema
       ENDIF
 
       filename = '/home/stefano/Downloads/test.hdf5'
-      CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
+      CALL h5fcreate_f(filename, h5f_acc_trunc_f, file_id, error)
+
+      ! CALL H5Tcopy_f(H5T_STRING, str_type, error)
+      ! CALL H5Tset_strpad_f(str_type, H5T_STR_NULLPAD_F, error)
+      ! CALL H5Tcopy_f(H5T_FORTRAN_S1, str_type, error)
+      ! create a scalar dataspace for attribute
+      ! CALL h5screate_f(h5s_scalar_f, space_id, error)
+      ! CALL h5screate_simple_f(1, dims, space_id, error)
+
+      ! call h5acreate_f(file_id, 'success', str_type, space_id, attr_id, error)
+      ! call h5awrite_f(attr_id, str_type, 'false', dims, error)
+
+      ! CALL h5acreate_f(file_id, 'success', h5t_std_, space_id, attr_id, error)
+      ! CALL h5awrite_f(attr_id, H5T_NATIVE_INT, 1, (/1/), error)
+      ! CALL h5aclose_f(attr_id, error)
+      ! CALL h5sclose_f(space_id, error)
+
+
+      CALL h5ltset_attribute_string_f(file_id, '/', 'schema_name', 'qc_schema_output', error)
+      CALL h5ltset_attribute_int_f(file_id, '/', 'schema_version', 3, error)
+
+      ! create the provenance group
+      CALL h5gcreate_f(file_id, 'provenance', group_id, error)
+      CALL h5screate_f(h5s_scalar_f, space_id, error)
+
+      ! create the properties group
+      CALL h5gcreate_f(file_id, 'properties', group_id, error)
 
       CALL h5fclose_f(file_id, error)
 
