@@ -23,21 +23,26 @@ MODULE qcschema
                                              default_path_length
    USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
+   USE qs_force_types,                 ONLY: qs_force_type
    USE qs_mo_types,                    ONLY: mo_set_p_type
    USE qs_scf_types,                   ONLY: qs_scf_env_type
    USE qs_energy_types,                ONLY: qs_energy_type
    USE qs_environment_types,           ONLY: get_qs_env, &
                                              qs_environment_type
-   ! USE hdf5,                           ONLY: h5open_f, h5close_f, &
-   !                                           h5fcreate_f, h5fopen_f, h5fclose_f, &
-   !                                           h5screate_f, h5s_scalar_f, &
-   !                                           h5gcreate_f, &
-   !                                           h5acreate_f, &
-   !                                           h5t_native_hbool, &
-   !                                           h5t_native_int, &
-   !                                           hid_t, h5f_acc_trunc_f
-   USE hdf5
-   use h5lt
+   USE hdf5,                           ONLY: h5open_f, h5close_f, &
+                                             h5fcreate_f, h5fopen_f, h5fclose_f, &
+                                             h5screate_f, h5sclose_f, H5S_SCALAR_F, &
+                                             h5gcreate_f, &
+                                             h5acreate_f, h5awrite_f, h5aclose_f, &
+                                             h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
+                                             h5tcreate_f, h5tenum_insert_f, h5tclose_f, &
+                                             H5T_STRING, H5T_CSET_UTF8_F, H5T_ENUM_F, &
+                                             H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
+                                             HID_T, H5F_ACC_TRUNC_F, SIZE_T
+   USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int
+   USE h5lt,                           ONLY: h5ltset_attribute_string_f, &
+                                             h5ltset_attribute_double_f, &
+                                             h5ltset_attribute_int_f
 
 #include "./base/base_uses.f90"
 
@@ -348,10 +353,9 @@ MODULE qcschema
       TYPE(qcschema_provenance)   :: provenance
       TYPE(qcschema_properties)   :: properties
       TYPE(qcschema_wavefunction) :: wavefunction
-      ! The primary result of the computation
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE :: return_result
-      ! Whether the computation was successful
       LOGICAL :: success
+      CHARACTER(LEN=default_string_length) :: driver
    END TYPE qcschema_type
 
 
@@ -370,6 +374,7 @@ MODULE qcschema
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_energy_type), POINTER                      :: energy
+      TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mp2_type), POINTER                            :: mp2_env
@@ -386,6 +391,7 @@ MODULE qcschema
       ! Collect environment info
       IF (ASSOCIATED(qs_env)) THEN
          CALL get_qs_env(qs_env, dft_control=dft_control, energy=energy, &
+                         force=force, &
                          mos=mos, particle_set=particle_set, scf_env=scf_env, &
                          mp2_env=mp2_env)
       ELSE
@@ -393,9 +399,36 @@ MODULE qcschema
          RETURN
       END IF
 
+      ! driver
+      ! TODO: maybe separate this into input component and
+      ! import iot here from there? This would follow the official
+      ! guidelines of QCSchema...
+      IF (ASSOCIATED(force)) THEN
+         qcschema_env%driver = 'gradient'
+      ELSE
+         qcschema_env%driver = 'energy'
+      END IF
+
       ! success
       ! TODO: how to check if the calculation was succesful?
       qcschema_env%success = .true.
+
+      ! return result
+      IF (ALLOCATED(qcschema_env%return_result)) THEN
+         DEALLOCATE (qcschema_env%return_result)
+      END IF
+      IF (qcschema_env%success) THEN
+         IF (qcschema_env%driver == 'energy') THEN
+            ALLOCATE (qcschema_env%return_result(1))
+            qcschema_env%return_result(1) = energy%total
+         ELSE
+            ALLOCATE (qcschema_env%return_result(3*SIZE(particle_set)))
+            ! TODO: populate with forces!!
+            qcschema_env%return_result = 0.0_dp
+         END IF
+      ELSE
+         ! TODO: error handling and abort?
+      END IF
 
       ! QCSchema provenanve
       qcschema_env%provenance%creator = 'CP2K'
@@ -498,13 +531,21 @@ MODULE qcschema
    END SUBROUTINE qcschema_env_create
 
 
-   SUBROUTINE qcschema_to_hdf5()!qcschema_env, qs_env)
-      ! TYPE(qcschema_type)                                :: qcschema_env
-      ! TYPE(qs_environment_type), POINTER                 :: qs_env
+   SUBROUTINE qcschema_to_hdf5(qcschema_env)!, qs_env)
+      TYPE(qcschema_type)                    :: qcschema_env
+      ! TYPE(qs_environment_type), POINTER     :: qs_env
       TYPE(cp_logger_type), POINTER          :: logger
       INTEGER                                :: error, output_unit
-      INTEGER(KIND=hid_t)                    :: file_id, space_id, attr_id, group_id, str_type
+      INTEGER(KIND=8)                        :: n_forces
+      INTEGER(KIND=hid_t)                    :: file_id, space_id, attr_id, group_id, str_type, bool_type
+      INTEGER(KIND=size_t)                   :: enum_size = 1 ! 8-bit integers in enum bool_type
       CHARACTER(LEN=default_path_length)     :: filename
+
+      TYPE(c_ptr), TARGET                    :: vlen_str
+      TYPE(c_ptr)                            :: buffer
+      CHARACTER(LEN=17), TARGET              :: schema_name = 'qcschema'
+      INTEGER, TARGET                        :: schema_version = 3
+      INTEGER, TARGET                        :: success
 
       logger => cp_get_default_logger()
       output_unit = cp_logger_get_default_io_unit(logger)
@@ -518,33 +559,74 @@ MODULE qcschema
       ENDIF
 
       filename = '/home/stefano/Downloads/test.hdf5'
-      CALL h5fcreate_f(filename, h5f_acc_trunc_f, file_id, error)
+      CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
 
-      ! CALL H5Tcopy_f(H5T_STRING, str_type, error)
-      ! CALL H5Tset_strpad_f(str_type, H5T_STR_NULLPAD_F, error)
-      ! CALL H5Tcopy_f(H5T_FORTRAN_S1, str_type, error)
-      ! create a scalar dataspace for attribute
-      ! CALL h5screate_f(h5s_scalar_f, space_id, error)
-      ! CALL h5screate_simple_f(1, dims, space_id, error)
+      ! create a variable-length string type
+      CALL h5tcopy_f(H5T_STRING, str_type, error)
+      CAll h5tset_cset_f(str_type, H5T_CSET_UTF8_F, error)
+      CALL h5tset_strpad_f(str_type, H5T_STR_NULLPAD_F, error)
 
-      ! call h5acreate_f(file_id, 'success', str_type, space_id, attr_id, error)
-      ! call h5awrite_f(attr_id, str_type, 'false', dims, error)
+      ! driver
+      CALL h5ltset_attribute_string_f(file_id, '/', 'driver', qcschema_env%driver, error)
 
-      ! CALL h5acreate_f(file_id, 'success', h5t_std_, space_id, attr_id, error)
-      ! CALL h5awrite_f(attr_id, H5T_NATIVE_INT, 1, (/1/), error)
-      ! CALL h5aclose_f(attr_id, error)
-      ! CALL h5sclose_f(space_id, error)
+      ! return result
+      n_forces = SIZE(qcschema_env%return_result)
+      CALL h5ltset_attribute_double_f(file_id, '/', 'return_result', &
+                                      qcschema_env%return_result, n_forces, error)
 
+      ! schema name
+      ! CALL h5ltset_attribute_string_f(file_id, '/', 'schema_name', 'qc_schema_output', error)
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      vlen_str = C_LOC(schema_name)
+      buffer = C_LOC(vlen_str)
+      CALL h5acreate_f(file_id, 'schema_name', str_type, space_id, attr_id, error)
+      CALL h5awrite_f(attr_id, str_type, buffer, error)
+      CALL h5aclose_f(attr_id, error)
+      CALL h5sclose_f(space_id, error)
 
-      CALL h5ltset_attribute_string_f(file_id, '/', 'schema_name', 'qc_schema_output', error)
-      CALL h5ltset_attribute_int_f(file_id, '/', 'schema_version', 3, error)
+      ! schema version
+      ! CALL h5ltset_attribute_int_f(file_id, '/', 'schema_version', 3, error)
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      buffer = C_LOC(schema_version)
+      CALL h5acreate_f(file_id, 'schema_version', H5T_NATIVE_INTEGER, space_id, attr_id, error)
+      CALL h5awrite_f(attr_id, H5T_NATIVE_INTEGER, buffer, error)
+      CALL h5aclose_f(attr_id, error)
+      CALL h5sclose_f(space_id, error)
+
+      ! success
+      ! CALL h5tenum_create_f(H5T_ENUM_F, bool_type, error)
+      CALL h5tcreate_f(H5T_ENUM_F, enum_size, bool_type, error)
+      CALL h5tenum_insert_f(bool_type, "FALSE", 0, error)
+      CALL h5tenum_insert_f(bool_type,  "TRUE", 1, error)
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      success = 1
+      buffer = C_LOC(success)
+      CALL h5acreate_f(file_id, 'success', bool_type, space_id, attr_id, error)
+      CALL h5awrite_f(attr_id, bool_type, buffer, error)
+      CALL h5aclose_f(attr_id, error)
+      CALL h5sclose_f(space_id, error)
+      CALL h5tclose_f(bool_type, error)
+
 
       ! create the provenance group
       CALL h5gcreate_f(file_id, 'provenance', group_id, error)
-      CALL h5screate_f(h5s_scalar_f, space_id, error)
+      ! CALL h5screate_f(h5s_scalar_f, space_id, error)
 
       ! create the properties group
       CALL h5gcreate_f(file_id, 'properties', group_id, error)
+
+      ! create the molecule group
+      CALL h5gcreate_f(file_id, 'molecule', group_id, error)
+
+      ! create the wavefunction group
+      CALL h5gcreate_f(file_id, 'wavefunction', group_id, error)
+
+      ! create the model group
+      CALL h5gcreate_f(file_id, 'model', group_id, error)
+
+      ! create the keywords group
+      CALL h5gcreate_f(file_id, 'keywords', group_id, error)
+
 
       CALL h5fclose_f(file_id, error)
 
