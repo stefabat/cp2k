@@ -14,16 +14,18 @@
 MODULE qcschema
 
    ! USE json_module,                    ONLY: json_core, json_value
-   USE cp2k_info,                      ONLY: cp2k_version
    USE cp_control_types,               ONLY: dft_control_type
+   USE cp2k_info,                      ONLY: cp2k_version
    USE cp_log_handling,                ONLY: cp_get_default_logger, &
                                              cp_logger_get_default_io_unit, &
                                              cp_logger_type
    USE kinds,                          ONLY: dp, default_string_length, &
-                                             default_path_length
+                                             default_path_length, int_8
    USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
+   USE qs_dispersion_types,            ONLY: qs_dispersion_type
    USE qs_force_types,                 ONLY: qs_force_type
+   USE qs_ks_types,                    ONLY: qs_ks_env_type
    USE qs_mo_types,                    ONLY: mo_set_p_type
    USE qs_scf_types,                   ONLY: qs_scf_env_type
    USE qs_energy_types,                ONLY: qs_energy_type
@@ -32,13 +34,13 @@ MODULE qcschema
    USE hdf5,                           ONLY: h5open_f, h5close_f, &
                                              h5fcreate_f, h5fopen_f, h5fclose_f, &
                                              h5screate_f, h5sclose_f, H5S_SCALAR_F, &
-                                             h5gcreate_f, &
+                                             h5gcreate_f, h5gclose_f, &
                                              h5acreate_f, h5awrite_f, h5aclose_f, &
-                                             h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
+                                             h5tset_size_f, h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
                                              h5tcreate_f, h5tenum_insert_f, h5tclose_f, &
                                              H5T_STRING, H5T_CSET_UTF8_F, H5T_ENUM_F, &
                                              H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
-                                             HID_T, H5F_ACC_TRUNC_F, SIZE_T
+                                             H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, SIZE_T, H5T_C_S1
    USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int
    USE h5lt,                           ONLY: h5ltset_attribute_string_f, &
                                              h5ltset_attribute_double_f, &
@@ -320,6 +322,11 @@ MODULE qcschema
       ! so I just don't care about it
       ! REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment = 0.0_dp
 
+      ! internal flags to know the type of calculation
+      LOGICAL :: dft = .FALSE.
+      LOGICAL :: dispersion = .FALSE.
+      LOGICAL :: mp2 = .FALSE.
+
       ! do we really need CC stuff?
       ! REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
       ! REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
@@ -375,9 +382,11 @@ MODULE qcschema
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
-      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mp2_type), POINTER                            :: mp2_env
+      TYPE(qs_dispersion_type), POINTER                  :: dispersion_env
+      TYPE(dft_control_type), POINTER                    :: dft_control
 
       INTEGER :: handle, output_unit, nspins, nalpha, nbeta, natom, nbasis, nmo
       REAL(KIND=dp) :: one_el_en, two_el_en, dispersion
@@ -390,12 +399,13 @@ MODULE qcschema
 
       ! Collect environment info
       IF (ASSOCIATED(qs_env)) THEN
-         CALL get_qs_env(qs_env, dft_control=dft_control, energy=energy, &
-                         force=force, &
+         CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, dft_control=dft_control, &
+                         force=force, dispersion_env=dispersion_env, &
                          mos=mos, particle_set=particle_set, scf_env=scf_env, &
                          mp2_env=mp2_env)
       ELSE
-         ! print something and quit
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: QS environment is not associated, QCSchema interface quitting'
          RETURN
       END IF
 
@@ -458,6 +468,8 @@ MODULE qcschema
       qcschema_env%properties%calcinfo_nalpha = nalpha
       qcschema_env%properties%calcinfo_nbeta  = nbeta
       qcschema_env%properties%return_energy   = energy%total
+      ! TODO: no way to get this one?
+      qcschema_env%properties%nuclear_repulsion_energy = 0.0_dp
 
       ! SCF info
       qcschema_env%properties%scf_iterations = scf_env%iter_count
@@ -476,6 +488,11 @@ MODULE qcschema
       ! qcschema_env%properties%scf_vv10_energy
       ! remove the mp2 part, in case it's non-zero
       qcschema_env%properties%scf_total_energy = energy%total
+
+      ! was it a DFT calculation?
+      IF (ASSOCIATED(qs_env%ks_env)) qcschema_env%properties%dft = .TRUE.
+      ! with dispersion?
+      IF (ASSOCIATED(qs_env%dispersion_env)) qcschema_env%properties%dispersion = .TRUE.
 
       ! Some methods of CP2K are not supported by QCSchema, let's warn the user
       IF (dft_control%smear) THEN
@@ -513,6 +530,7 @@ MODULE qcschema
 
       ! MP2 info
       IF (ASSOCIATED(qs_env%mp2_env)) THEN
+         qcschema_env%properties%mp2 = .TRUE.
          ! this info is actually computed, but not stored!
          ! qcschema_env%properties%mp2_singles_energy       ! don't know what these are
          ! qcschema_env%properties%mp2_doubles_energy       ! MP2 should be only this?
@@ -531,21 +549,13 @@ MODULE qcschema
    END SUBROUTINE qcschema_env_create
 
 
-   SUBROUTINE qcschema_to_hdf5(qcschema_env)!, qs_env)
-      TYPE(qcschema_type)                    :: qcschema_env
-      ! TYPE(qs_environment_type), POINTER     :: qs_env
+   SUBROUTINE qcschema_to_hdf5(qcschema_env)
+      TYPE(qcschema_type), INTENT(IN)        :: qcschema_env
       TYPE(cp_logger_type), POINTER          :: logger
       INTEGER                                :: error, output_unit
-      INTEGER(KIND=8)                        :: n_forces
-      INTEGER(KIND=hid_t)                    :: file_id, space_id, attr_id, group_id, str_type, bool_type
-      INTEGER(KIND=size_t)                   :: enum_size = 1 ! 8-bit integers in enum bool_type
+      INTEGER(KIND=int_8)                    :: nresult
+      INTEGER(KIND=hid_t)                    :: file_id, space_id, group_id
       CHARACTER(LEN=default_path_length)     :: filename
-
-      TYPE(c_ptr), TARGET                    :: vlen_str
-      TYPE(c_ptr)                            :: buffer
-      CHARACTER(LEN=17), TARGET              :: schema_name = 'qcschema'
-      INTEGER, TARGET                        :: schema_version = 3
-      INTEGER, TARGET                        :: success
 
       logger => cp_get_default_logger()
       output_unit = cp_logger_get_default_io_unit(logger)
@@ -561,71 +571,99 @@ MODULE qcschema
       filename = '/home/stefano/Downloads/test.hdf5'
       CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
 
-      ! create a variable-length string type
-      CALL h5tcopy_f(H5T_STRING, str_type, error)
-      CAll h5tset_cset_f(str_type, H5T_CSET_UTF8_F, error)
-      CALL h5tset_strpad_f(str_type, H5T_STR_NULLPAD_F, error)
-
+      ! !===========================================================================!
+      ! Root
+      ! !===========================================================================!
       ! driver
-      CALL h5ltset_attribute_string_f(file_id, '/', 'driver', qcschema_env%driver, error)
-
+      CALL h5awrite_fixlen_string(file_id, 'driver', trim(qcschema_env%driver))
       ! return result
-      n_forces = SIZE(qcschema_env%return_result)
-      CALL h5ltset_attribute_double_f(file_id, '/', 'return_result', &
-                                      qcschema_env%return_result, n_forces, error)
-
+      nresult = SIZE(qcschema_env%return_result)
+      IF (SIZE(qcschema_env%return_result) == 1) THEN
+         CALL h5awrite_double_scalar(file_id, 'return_result', qcschema_env%return_result(1))
+      ELSE
+         CALL h5ltset_attribute_double_f(file_id, '/', 'return_result', &
+                                         qcschema_env%return_result, nresult, error)
+      END IF
       ! schema name
-      ! CALL h5ltset_attribute_string_f(file_id, '/', 'schema_name', 'qc_schema_output', error)
-      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
-      vlen_str = C_LOC(schema_name)
-      buffer = C_LOC(vlen_str)
-      CALL h5acreate_f(file_id, 'schema_name', str_type, space_id, attr_id, error)
-      CALL h5awrite_f(attr_id, str_type, buffer, error)
-      CALL h5aclose_f(attr_id, error)
-      CALL h5sclose_f(space_id, error)
-
+      CALL h5awrite_fixlen_string(file_id, 'schema_name', 'qcschema')
       ! schema version
-      ! CALL h5ltset_attribute_int_f(file_id, '/', 'schema_version', 3, error)
-      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
-      buffer = C_LOC(schema_version)
-      CALL h5acreate_f(file_id, 'schema_version', H5T_NATIVE_INTEGER, space_id, attr_id, error)
-      CALL h5awrite_f(attr_id, H5T_NATIVE_INTEGER, buffer, error)
-      CALL h5aclose_f(attr_id, error)
-      CALL h5sclose_f(space_id, error)
-
+      CALL h5awrite_integer_scalar(file_id, 'schema_version', 3)
       ! success
-      ! CALL h5tenum_create_f(H5T_ENUM_F, bool_type, error)
-      CALL h5tcreate_f(H5T_ENUM_F, enum_size, bool_type, error)
-      CALL h5tenum_insert_f(bool_type, "FALSE", 0, error)
-      CALL h5tenum_insert_f(bool_type,  "TRUE", 1, error)
-      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
-      success = 1
-      buffer = C_LOC(success)
-      CALL h5acreate_f(file_id, 'success', bool_type, space_id, attr_id, error)
-      CALL h5awrite_f(attr_id, bool_type, buffer, error)
-      CALL h5aclose_f(attr_id, error)
-      CALL h5sclose_f(space_id, error)
-      CALL h5tclose_f(bool_type, error)
+      CALL h5awrite_boolean(file_id, 'success', qcschema_env%success)
 
-
+      ! !===========================================================================!
+      ! Provenance
+      ! !===========================================================================!
       ! create the provenance group
       CALL h5gcreate_f(file_id, 'provenance', group_id, error)
-      ! CALL h5screate_f(h5s_scalar_f, space_id, error)
+      ! populate provenance
+      CALL h5awrite_fixlen_string(group_id, 'creator', trim(qcschema_env%provenance%creator))
+      CALL h5awrite_fixlen_string(group_id, 'routine', trim(qcschema_env%provenance%routine))
+      CALL h5awrite_fixlen_string(group_id, 'version', trim(qcschema_env%provenance%version))
+      ! close provenance group
+      CALL h5gclose_f(group_id, error)
 
+      ! !===========================================================================!
+      ! Properties
+      ! !===========================================================================!
       ! create the properties group
       CALL h5gcreate_f(file_id, 'properties', group_id, error)
+      ! populate properties
+      CALL h5awrite_integer_scalar(group_id, 'calcinfo_natom',  qcschema_env%properties%calcinfo_natom )
+      CALL h5awrite_integer_scalar(group_id, 'calcinfo_nbasis', qcschema_env%properties%calcinfo_nbasis)
+      CALL h5awrite_integer_scalar(group_id, 'calcinfo_nmo',    qcschema_env%properties%calcinfo_nmo   )
+      CALL h5awrite_integer_scalar(group_id, 'calcinfo_nalpha', qcschema_env%properties%calcinfo_nalpha)
+      CALL h5awrite_integer_scalar(group_id, 'calcinfo_nbeta',  qcschema_env%properties%calcinfo_nbeta )
 
+      CALL h5awrite_double_scalar(group_id, 'return_energy', qcschema_env%properties%return_energy)
+      CALL h5awrite_double_scalar(group_id, 'nuclear_repulsion_energy', &
+                                  qcschema_env%properties%nuclear_repulsion_energy)
+
+      CALL h5awrite_integer_scalar(group_id, 'scf_iterations', qcschema_env%properties%scf_iterations)
+      CALL h5awrite_double_scalar(group_id, 'scf_one_electron_energy', &
+                                  qcschema_env%properties%scf_one_electron_energy)
+      CALL h5awrite_double_scalar(group_id, 'scf_two_electron_energy', &
+                                  qcschema_env%properties%scf_two_electron_energy)
+      IF (qcschema_env%properties%dft) THEN
+         CALL h5awrite_double_scalar(group_id, 'scf_xc_energy', &
+                                     qcschema_env%properties%scf_xc_energy)
+      END IF
+      IF (qcschema_env%properties%dispersion) THEN
+         CALL h5awrite_double_scalar(group_id, 'scf_dispersion_correction_energy', &
+                                     qcschema_env%properties%scf_dispersion_correction_energy)
+      END IF
+
+      IF (qcschema_env%properties%mp2) THEN
+         CALL h5awrite_double_scalar(group_id, 'mp2_correlation_energy', &
+                                     qcschema_env%properties%mp2_correlation_energy)
+      END IF
+      ! close properties group
+      CALL h5gclose_f(group_id, error)
+
+      ! !===========================================================================!
+      ! Molecule
+      ! !===========================================================================!
       ! create the molecule group
       CALL h5gcreate_f(file_id, 'molecule', group_id, error)
+      ! close molecule group
+      CALL h5gclose_f(group_id, error)
 
       ! create the wavefunction group
       CALL h5gcreate_f(file_id, 'wavefunction', group_id, error)
+      ! close wavefunction group
+      CALL h5gclose_f(group_id, error)
 
       ! create the model group
       CALL h5gcreate_f(file_id, 'model', group_id, error)
+      CALL h5screate_f(h5s_scalar_f, space_id, error)
+      CALL h5sclose_f(space_id, error)
+      ! close model group
+      CALL h5gclose_f(group_id, error)
 
       ! create the keywords group
       CALL h5gcreate_f(file_id, 'keywords', group_id, error)
+      ! close keywords group
+      CALL h5gclose_f(group_id, error)
 
 
       CALL h5fclose_f(file_id, error)
@@ -634,6 +672,333 @@ MODULE qcschema
 
 
    END SUBROUTINE qcschema_to_hdf5
+
+
+   SUBROUTINE h5awrite_varlen_string(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)        :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)           :: attr_name
+      CHARACTER(LEN=*), INTENT(IN), TARGET   :: attr_data
+      INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
+      TYPE(c_ptr), TARGET                    :: in_between_ptr
+      TYPE(c_ptr)                            :: buffer
+      INTEGER                                :: error, output_unit
+
+      ! create a scalar dataspace
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! create a variable-length string type
+      CALL h5tcopy_f(H5T_STRING, type_id, error)
+      CAll h5tset_cset_f(type_id, H5T_CSET_UTF8_F, error)
+      CALL h5tset_strpad_f(type_id, H5T_STR_NULLPAD_F, error)
+
+      ! create the attribute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! weird in-between pointer needed for variable-length
+      ! string to a scalar dataspace
+      in_between_ptr = C_LOC(attr_data)
+      ! the actual pointer to be passed
+      buffer = C_LOC(in_between_ptr)
+
+      ! write the string attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: writing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! close datatype
+      CALL h5tclose_f(type_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 datatype failed'
+         RETURN
+      ENDIF
+
+   END SUBROUTINE h5awrite_varlen_string
+
+
+   SUBROUTINE h5awrite_fixlen_string(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)        :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)           :: attr_name
+      CHARACTER(LEN=*), INTENT(IN), TARGET   :: attr_data
+      INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
+      TYPE(c_ptr)                            :: buffer
+      INTEGER                                :: error, output_unit
+
+      ! create a scalar dataspace
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! create a fixed-length string datatype
+      CALL h5tcopy_f(H5T_C_S1, type_id, error)
+      CAll h5tset_cset_f(type_id, H5T_CSET_UTF8_F, error)
+      CALL h5tset_size_f(type_id, LEN(attr_data, int_8), error)
+
+      ! create the attribute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! the actual pointer to be passed
+      buffer = C_LOC(attr_data)
+
+      ! write the string attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: writing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! close datatype
+      CALL h5tclose_f(type_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 datatype failed'
+         RETURN
+      ENDIF
+
+   END SUBROUTINE h5awrite_fixlen_string
+
+
+   SUBROUTINE h5awrite_boolean(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)        :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)           :: attr_name
+      LOGICAL, INTENT(IN)                    :: attr_data
+      INTEGER, TARGET                        :: attr_data_to_int
+      INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
+      INTEGER(KIND=size_t)                   :: enum_size = 1 ! 8-bit integers in enum bool_type
+      TYPE(c_ptr)                            :: buffer
+      INTEGER                                :: error, output_unit
+
+      ! create a scalar dataspace
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! create the datatype
+      CALL h5tcreate_f(H5T_ENUM_F, enum_size, type_id, error)
+      CALL h5tenum_insert_f(type_id, "FALSE", 0, error)
+      CALL h5tenum_insert_f(type_id,  "TRUE", 1, error)
+
+      IF (attr_data) THEN
+         attr_data_to_int = 1
+      ELSE
+         attr_data_to_int = 0
+      END IF
+      ! the C pointer to the actual data
+      buffer = C_LOC(attr_data_to_int)
+
+      ! create the attribute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! write the string attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: writing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! close datatype
+      CALL h5tclose_f(type_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 datatype failed'
+         RETURN
+      ENDIF
+
+   END SUBROUTINE h5awrite_boolean
+
+
+   SUBROUTINE h5awrite_integer_scalar(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)        :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)           :: attr_name
+      INTEGER, INTENT(IN), TARGET            :: attr_data
+      INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
+      TYPE(c_ptr)                            :: buffer
+      INTEGER                                :: error, output_unit
+
+      ! create a scalar dataspace
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! the C pointer to the actual data
+      buffer = C_LOC(attr_data)
+
+      ! set the type of data
+      type_id = H5T_NATIVE_INTEGER
+
+      ! create the attribute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! write the string attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: writing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+   END SUBROUTINE h5awrite_integer_scalar
+
+
+   SUBROUTINE h5awrite_double_scalar(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)        :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)           :: attr_name
+      REAL(KIND=dp), INTENT(IN), TARGET      :: attr_data
+      INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
+      TYPE(c_ptr)                            :: buffer
+      INTEGER                                :: error, output_unit
+
+      ! create a scalar dataspace
+      CALL h5screate_f(H5S_SCALAR_F, space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+      ! the C pointer to the actual data
+      buffer = C_LOC(attr_data)
+
+      ! set the type of data
+      type_id = H5T_NATIVE_DOUBLE
+
+      ! create the attribute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: creation of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! write the string attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: writing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 attribute failed'
+         RETURN
+      ENDIF
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) THEN
+         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
+         ' ERROR: closing of HDF5 dataspace failed'
+         RETURN
+      ENDIF
+
+   END SUBROUTINE h5awrite_double_scalar
+
 
    ! SUBROUTINE qcschema_env_release
    ! END SUBROUTINE qcschema_env_release
