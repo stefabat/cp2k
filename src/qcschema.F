@@ -23,7 +23,7 @@ MODULE qcschema
                                              default_path_length, int_8
    USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
-   USE qs_dispersion_types,            ONLY: qs_dispersion_type
+   USE qs_active_space_types,          ONLY: active_space_type
    USE qs_force_types,                 ONLY: qs_force_type
    USE qs_ks_types,                    ONLY: qs_ks_env_type
    USE qs_mo_types,                    ONLY: mo_set_p_type
@@ -40,10 +40,12 @@ MODULE qcschema
                                              h5tcreate_f, h5tenum_insert_f, h5tclose_f, &
                                              H5T_STRING, H5T_CSET_UTF8_F, H5T_ENUM_F, &
                                              H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
-                                             H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, SIZE_T, H5T_C_S1
+                                             H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, &
+                                             SIZE_T, H5T_C_S1, HSIZE_T
    USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int
    USE h5lt,                           ONLY: h5ltset_attribute_string_f, &
                                              h5ltset_attribute_double_f, &
+                                             h5ltmake_dataset_double_f, &
                                              h5ltset_attribute_int_f
 
 #include "./base/base_uses.f90"
@@ -56,7 +58,7 @@ MODULE qcschema
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
    PUBLIC :: qcschema_type
-   PUBLIC :: qcschema_env_create, qcschema_to_hdf5
+   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5
 
 ! **************************************************************************************************
 !> \brief A derived type to store the program information that generated the QCSchema file.
@@ -77,9 +79,9 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_topology
       ! The list of atom symbols in this topology
-      CHARACTER(LEN=2), DIMENSION(:), ALLOCATABLE  :: symbols
+      CHARACTER(LEN=2), DIMENSION(:), POINTER      :: symbols => Null()
       ! The XYZ coordinates (in Bohr) of the atoms as a flat array (row major order)
-      REAL(KIND=dp),  DIMENSION(:), ALLOCATABLE    :: geometry
+      REAL(KIND=dp),  DIMENSION(:), POINTER        :: geometry => Null()
       CHARACTER(LEN=default_string_length)         :: schema_name    ! The name of this schema
       INTEGER                                      :: schema_version ! The version of this specific schema
       INTEGER                                      :: molecular_charge
@@ -88,28 +90,28 @@ MODULE qcschema
       LOGICAL                                      :: fix_com
       ! A list indicating whether each atom is real (.True.) or a ghost (.False.).
       ! Its length must match that of the `symbols` list
-      LOGICAL, DIMENSION(:), ALLOCATABLE           :: real
+      LOGICAL, DIMENSION(:), POINTER               :: real => Null()
       ! A list indicating the bonds between the atoms in the molecule. Each item of this list must be
       ! a tuple of three integers, indicating the first atom index in the bond, the second atom index,
       ! and finally the order of the bond
-      INTEGER, DIMENSION(:,:), ALLOCATABLE         :: connectivity
+      INTEGER, DIMENSION(:,:), POINTER             :: connectivity => Null()
       ! Whether rotation of the geometry is allowed (`False`) or not (`True`)
       LOGICAL                                      :: fix_orientation
       ! A list of user-provided information for each atom. Its length must match that of the `symbols` list
-      CHARACTER(LEN=8), DIMENSION(:), ALLOCATABLE  :: atom_labels
+      CHARACTER(LEN=8), DIMENSION(:), POINTER      :: atom_labels => Null()
       ! The list of multiplicities associated with each fragment
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: fragment_multiplicities
+      INTEGER, DIMENSION(:), POINTER               :: fragment_multiplicities => Null()
       ! The maximal point group symmetry at which the `geometry` should be treated
       CHARACTER(LEN=default_string_length)         :: fix_symmetry
       ! The list of charges associated with each fragment
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: fragment_charges
+      INTEGER, DIMENSION(:), POINTER               :: fragment_charges => Null()
       ! The mass numbers of all atoms. If it is an unknown isotope, the value should be -1.
       ! Its length must match that of the `symbols` list
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: mass_numbers
+      INTEGER, DIMENSION(:), POINTER               :: mass_numbers => Null()
       ! The (user-given) name of the molecule
       CHARACTER(LEN=default_string_length)         :: name
       ! The masses (in au) of all atoms. Canonical weights are assumed if this is not given explicitly
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: masses
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: masses => Null()
       ! Any additional (user-provided) comment
       CHARACTER(LEN=default_string_length)         :: comment
       ! An instance of :class:`QCProvenance`
@@ -117,10 +119,10 @@ MODULE qcschema
       ! The list of fragments. Each item of this list must be a tuple of integers with variable
       ! length (greater than 1). The first number indicates the fragment index, all following numbers
       ! refer to the (0-indexed) atom indices that constitute this fragment
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: fragments
+      INTEGER, DIMENSION(:), POINTER               :: fragments => Null()
       ! The atomic numbers of all atoms, indicating their nuclear charge. Its length must match that
       ! of the `symbols` list
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: atomic_numbers
+      INTEGER, DIMENSION(:), POINTER               :: atomic_numbers => Null()
    END TYPE qcschema_topology
 
 
@@ -131,13 +133,13 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_electron_shell
       ! The angular momenta of this electron shell as a list of integers
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: angular_momentum
+      INTEGER, DIMENSION(:), POINTER               :: angular_momentum => Null()
       ! The type of this shell: spherical or cartesian
       CHARACTER(LEN=9)                             :: harmonic_type
       ! The exponents of this contracted shell. The official spec stores these values as strings
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: exponents
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: exponents => Null()
       ! The general contraction coefficients of this contracted shell
-      REAL(KIND=dp), DIMENSION(:,:), ALLOCATABLE   :: coefficients
+      REAL(KIND=dp), DIMENSION(:,:), POINTER       :: coefficients => Null()
    END TYPE qcschema_electron_shell
 
 
@@ -150,13 +152,13 @@ MODULE qcschema
       ! The type of this potential
       CHARACTER(LEN=default_string_length)         :: ecp_type
       ! The angular momenta of this potential as a list of integers
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: angular_momentum
+      INTEGER, DIMENSION(:), POINTER               :: angular_momentum => Null()
       ! The exponents of the r terms
-      INTEGER, DIMENSION(:), ALLOCATABLE           :: r_exponents
+      INTEGER, DIMENSION(:), POINTER               :: r_exponents => Null()
       ! The exponents of the Gaussian terms
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: gaussian_exponents
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: gaussian_exponents => Null()
       ! The general contraction coefficients of this potential
-      REAL(KIND=dp), DIMENSION(:,:), ALLOCATABLE   :: coefficients
+      REAL(KIND=dp), DIMENSION(:,:), POINTER       :: coefficients => Null()
    END TYPE qcschema_ecp
 
 
@@ -167,13 +169,11 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_center_basis
       ! The list of electronic shells for this element
-      TYPE(qcschema_electron_shell), DIMENSION(:), ALLOCATABLE &
-      :: electron_shells
+      TYPE(qcschema_electron_shell), DIMENSION(:), POINTER :: electron_shells => Null()
       ! The list of effective core potentials for this element
-      TYPE(qcschema_ecp), DIMENSION(:), ALLOCATABLE &
-      :: ecp_potentials
+      TYPE(qcschema_ecp), DIMENSION(:), POINTER            :: ecp_potentials => Null()
       ! The number of electrons replaced by an ECP
-      INTEGER                                      :: ecp_electrons
+      INTEGER                                              :: ecp_electrons
    END TYPE qcschema_center_basis
 
 
@@ -184,22 +184,21 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_basis_set
       ! The name of the basis set
-      CHARACTER(LEN=default_string_length)         :: name
+      CHARACTER(LEN=default_string_length) :: name
       ! A dictionary mapping the keys provided by `atom_map` to their basis center data
-      TYPE(qcschema_center_basis), DIMENSION(:), ALLOCATABLE &
-      :: center_data
+      TYPE(qcschema_center_basis), DIMENSION(:), POINTER :: center_data => Null()
       ! The list of atomic kinds, indicating the keys used to store the basis in `center_data`
       ! Not clear if this will be of the length of the basis set size, or rather just one
       ! entry for atomic kind. E.g. only one entry for hydrogen even though there might be
       ! many hydrogen atoms in the molecule. If this is the case, then we really need a
       ! hash table for `center_data`
-      CHARACTER(LEN=2), DIMENSION(:), ALLOCATABLE  :: atom_map
+      CHARACTER(LEN=2), DIMENSION(:), POINTER            :: atom_map => Null()
       ! The version of this specific schema
-      INTEGER                                      :: schema_version
+      INTEGER                                            :: schema_version
       ! The name of this schema. This value is expected to be `qcschema_basis`
-      CHARACTER(LEN=default_string_length)         :: schema_name
+      CHARACTER(LEN=default_string_length)               :: schema_name
       ! A description of this basis set
-      CHARACTER(LEN=default_string_length)         :: description
+      CHARACTER(LEN=default_string_length)               :: description
    END TYPE qcschema_basis_set
 
 
@@ -237,44 +236,44 @@ MODULE qcschema
       CHARACTER(LEN=default_string_length)         :: eri_mo_bb
 
       ! SCF quantities in AO or MO basis
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_mo_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_mo_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_mo_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_mo_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_coulomb_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_coulomb_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_exchange_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_exchange_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eigenvalues_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eigenvalues_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_occupations_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_occupations_b
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_orbitals_a    => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_orbitals_b    => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_a     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_b     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_mo_a  => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_mo_b  => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_a        => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_b        => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_mo_a     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_mo_b     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_coulomb_a     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_coulomb_b     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_exchange_a    => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_exchange_b    => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eigenvalues_a => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eigenvalues_b => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_occupations_a => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_occupations_b => Null()
 
       ! ERI should be arrays of doubles, but in Qiskit are simple strings?
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_aa
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ab
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ba
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_bb
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri       => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_aa => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_ab => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_ba => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_bb => Null()
 
       ! Quantities with localized orbitals. All `nmo` orbitals are included,
       ! even if only a subset were localized
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: localized_orbitals_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: localized_orbitals_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: localized_fock_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: localized_fock_b
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_orbitals_a => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_orbitals_b => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_fock_a     => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_fock_b     => Null()
 
       ! Nne-electron Hamiltonians in AO basis
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: h_core_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: h_core_b
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: h_effective_a
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: h_effective_b
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_core_a      => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_core_b      => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_effective_a => Null()
+      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_effective_b => Null()
 
       ! Whether the computation used restricted spin orbitals
       LOGICAL :: restricted
@@ -323,8 +322,6 @@ MODULE qcschema
       ! REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment = 0.0_dp
 
       ! internal flags to know the type of calculation
-      LOGICAL :: dft = .FALSE.
-      LOGICAL :: dispersion = .FALSE.
       LOGICAL :: mp2 = .FALSE.
 
       ! do we really need CC stuff?
@@ -385,10 +382,11 @@ MODULE qcschema
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mp2_type), POINTER                            :: mp2_env
-      TYPE(qs_dispersion_type), POINTER                  :: dispersion_env
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(active_space_type), POINTER                   :: active_space_env
 
       INTEGER :: handle, output_unit, nspins, nalpha, nbeta, natom, nbasis, nmo
+      INTEGER :: i, m
       REAL(KIND=dp) :: one_el_en, two_el_en, dispersion
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
@@ -399,10 +397,11 @@ MODULE qcschema
 
       ! Collect environment info
       IF (ASSOCIATED(qs_env)) THEN
-         CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, dft_control=dft_control, &
-                         force=force, dispersion_env=dispersion_env, &
-                         mos=mos, particle_set=particle_set, scf_env=scf_env, &
-                         mp2_env=mp2_env)
+         CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, &
+                         dft_control=dft_control, force=force, &
+                         mos=mos, particle_set=particle_set, &
+                         scf_env=scf_env, mp2_env=mp2_env, &
+                         active_space_env=active_space_env)
       ELSE
          WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
          ' ERROR: QS environment is not associated, QCSchema interface quitting'
@@ -490,9 +489,9 @@ MODULE qcschema
       qcschema_env%properties%scf_total_energy = energy%total
 
       ! was it a DFT calculation?
-      IF (ASSOCIATED(qs_env%ks_env)) qcschema_env%properties%dft = .TRUE.
+      ! IF (ASSOCIATED(qs_env%ks_env)) qcschema_env%properties%dft = .TRUE.
       ! with dispersion?
-      IF (ASSOCIATED(qs_env%dispersion_env)) qcschema_env%properties%dispersion = .TRUE.
+      ! IF (ASSOCIATED(qs_env%dispersion_env)) qcschema_env%properties%dispersion = .TRUE.
 
       ! Some methods of CP2K are not supported by QCSchema, let's warn the user
       IF (dft_control%smear) THEN
@@ -544,10 +543,33 @@ MODULE qcschema
          qcschema_env%properties%scf_total_energy = energy%total - energy%mp2
       END IF
 
+
+      ! *** QCSchema wavefunction *** !
+      qcschema_env%wavefunction%scf_eigenvalues_a => mos(1)%mo_set%eigenvalues
+      IF (nspins == 2) THEN
+         qcschema_env%wavefunction%scf_eigenvalues_b => mos(2)%mo_set%eigenvalues
+      END IF
+
+      m = (nspins*(nspins + 1))/2
+      DO i = 1,m
+         active_space_env%eri%eri(i)%csr_mat
+      END DO
+
+
+
       CALL timestop(handle)
 
    END SUBROUTINE qcschema_env_create
 
+
+   SUBROUTINE qcschema_env_release(qcschema_env)
+      TYPE(qcschema_type), INTENT(INOUT)      :: qcschema_env
+
+      IF (ALLOCATED(qcschema_env%return_result)) THEN
+         DEALLOCATE (qcschema_env%return_result)
+      END IF
+
+   END SUBROUTINE qcschema_env_release
 
    SUBROUTINE qcschema_to_hdf5(qcschema_env)
       TYPE(qcschema_type), INTENT(IN)        :: qcschema_env
@@ -556,6 +578,7 @@ MODULE qcschema
       INTEGER(KIND=int_8)                    :: nresult
       INTEGER(KIND=hid_t)                    :: file_id, space_id, group_id
       CHARACTER(LEN=default_path_length)     :: filename
+      INTEGER(KIND=hsize_t), DIMENSION(1:1)  :: dims
 
       logger => cp_get_default_logger()
       output_unit = cp_logger_get_default_io_unit(logger)
@@ -614,25 +637,24 @@ MODULE qcschema
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nmo',    qcschema_env%properties%calcinfo_nmo   )
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nalpha', qcschema_env%properties%calcinfo_nalpha)
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nbeta',  qcschema_env%properties%calcinfo_nbeta )
-
+      ! energies, scf, mp2, ...
       CALL h5awrite_double_scalar(group_id, 'return_energy', qcschema_env%properties%return_energy)
       CALL h5awrite_double_scalar(group_id, 'nuclear_repulsion_energy', &
                                   qcschema_env%properties%nuclear_repulsion_energy)
-
       CALL h5awrite_integer_scalar(group_id, 'scf_iterations', qcschema_env%properties%scf_iterations)
       CALL h5awrite_double_scalar(group_id, 'scf_one_electron_energy', &
                                   qcschema_env%properties%scf_one_electron_energy)
       CALL h5awrite_double_scalar(group_id, 'scf_two_electron_energy', &
                                   qcschema_env%properties%scf_two_electron_energy)
-      IF (qcschema_env%properties%dft) THEN
+      CALL h5awrite_double_scalar(group_id, 'scf_total_energy', qcschema_env%properties%scf_total_energy)
+      IF (qcschema_env%properties%scf_xc_energy /= 0.0_dp) THEN
          CALL h5awrite_double_scalar(group_id, 'scf_xc_energy', &
                                      qcschema_env%properties%scf_xc_energy)
       END IF
-      IF (qcschema_env%properties%dispersion) THEN
+      IF (qcschema_env%properties%scf_dispersion_correction_energy /= 0.0_dp) THEN
          CALL h5awrite_double_scalar(group_id, 'scf_dispersion_correction_energy', &
                                      qcschema_env%properties%scf_dispersion_correction_energy)
       END IF
-
       IF (qcschema_env%properties%mp2) THEN
          CALL h5awrite_double_scalar(group_id, 'mp2_correlation_energy', &
                                      qcschema_env%properties%mp2_correlation_energy)
@@ -650,6 +672,14 @@ MODULE qcschema
 
       ! create the wavefunction group
       CALL h5gcreate_f(file_id, 'wavefunction', group_id, error)
+      dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_a, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_a', 1, dims, &
+                                     qcschema_env%wavefunction%scf_eigenvalues_a, error)
+      IF (nspins = 2) THEN
+         dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_b, kind=hsize_t)
+         CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_b', 1, dims, &
+                                        qcschema_env%wavefunction%scf_eigenvalues_b, error)
+      END IF
       ! close wavefunction group
       CALL h5gclose_f(group_id, error)
 
