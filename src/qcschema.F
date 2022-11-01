@@ -22,7 +22,7 @@ MODULE qcschema
                                              cp_logger_get_default_io_unit, &
                                              cp_logger_type
    USE kinds,                          ONLY: dp, default_string_length, &
-                                             default_path_length, int_8
+                                             default_path_length, int_8, int_4
    USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
    USE periodic_table,                 ONLY: get_ptable_info
@@ -39,9 +39,9 @@ MODULE qcschema
                                              h5screate_f, h5screate_simple_f, h5sclose_f, H5S_SCALAR_F, &
                                              h5gcreate_f, h5gclose_f, &
                                              h5acreate_f, h5awrite_f, h5aclose_f, &
-                                             h5dcreate_f, h5dwrite_f, h5dclose_f, &
+                                             h5dcreate_f, h5dwrite_f, h5dwrite_vl_f, h5dclose_f, &
                                              h5tset_size_f, h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
-                                             h5tcreate_f, h5tenum_insert_f, h5tclose_f, &
+                                             h5tcreate_f, h5tenum_insert_f, h5tclose_f, h5tvlen_create_f, &
                                              H5T_STRING, H5T_CSET_UTF8_F, H5T_ENUM_F, &
                                              H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
                                              H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, &
@@ -218,6 +218,9 @@ MODULE qcschema
 ! **************************************************************************************************
    TYPE qcschema_wavefunction
 
+      ! The name of the method used to obtain the wf
+      CHARACTER(LEN=default_string_length)         :: method
+
       ! The basis set used during the computation
       TYPE(qcschema_basis_set)                     :: basis_set
 
@@ -311,7 +314,7 @@ MODULE qcschema
       REAL(KIND=dp) :: scf_one_electron_energy          = 0.0_dp
       REAL(KIND=dp) :: scf_two_electron_energy          = 0.0_dp
       REAL(KIND=dp) :: nuclear_repulsion_energy         = 0.0_dp
-      ! REAL(KIND=dp) :: scf_vv10_energy                  = 0.0_dp
+      REAL(KIND=dp) :: scf_vv10_energy                  = 0.0_dp
       REAL(KIND=dp) :: scf_xc_energy                    = 0.0_dp
       REAL(KIND=dp) :: scf_dispersion_correction_energy = 0.0_dp
       REAL(KIND=dp) :: scf_total_energy                 = 0.0_dp
@@ -389,19 +392,19 @@ MODULE qcschema
       TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(cp_logger_type), POINTER                      :: logger
 
-      ! TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      ! TYPE(qs_scf_env_type), POINTER                     :: scf_env
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
       ! TYPE(qs_ks_env_type), POINTER                      :: ks_env
       ! TYPE(mp2_type), POINTER                            :: mp2_env
       TYPE(dft_control_type), POINTER                    :: dft_control
-      INTEGER :: handle, output_unit, natoms, nspins, nbasis, nmo_active, nel_active, &
-                 i_loc, j_loc, i_glb, j_glb, i_glb_start, i_glb_end, &
+      INTEGER :: handle, output_unit, natoms, nspins, nmo, nao, nel, &
+                 nalpha, nbeta, i_loc, j_loc, i_glb, j_glb, i_glb_start, i_glb_end, &
                  atomic_number, iatom
       CHARACTER(Len=2) :: atomic_symbol
-      REAL(KIND=dp) :: fval
+      REAL(KIND=dp) :: fval, dispersion, one_el_en, two_el_en
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
       CALL timeset(routineN, handle)
@@ -421,25 +424,25 @@ MODULE qcschema
          !                 active_space=active_space_env)
          CALL get_qs_env(qs_env, particle_set=particle_set, &
                                  dft_control=dft_control, &
-                                 force=force, &
-                                 energy=energy, &
+                                 force=force, mos=mos, &
+                                 energy=energy, scf_env=scf_env, &
                                  active_space=active_space_env)
       ELSE
          CPABORT("QS environment not associated, QCSchema interface quitting")
       END IF
 
-      ! *************************** !
-      ! *** QCSchema provenance *** !
-      ! *************************** !
+      !========================================================================================!
+      ! *** QCSchema provenance ***
+      !========================================================================================!
 
       qcschema_env%provenance%creator = 'CP2K'
       qcschema_env%provenance%version = cp2k_version
       qcschema_env%provenance%routine = routineN
 
 
-      ! ************************* !
-      ! *** QCSchema topology *** !
-      ! ************************* !
+      !========================================================================================!
+      ! *** QCSchema topology ***
+      !========================================================================================!
 
       qcschema_env%topology%schema_name = 'qcschema'
       qcschema_env%topology%schema_version = 1
@@ -466,97 +469,152 @@ MODULE qcschema
       qcschema_env%topology%molecular_charge = dft_control%charge
       qcschema_env%topology%molecular_multiplicity = dft_control%multiplicity
 
+
+      !========================================================================================!
+      ! *** QCSchema properties ***
+      !========================================================================================!
+
       IF (active_space) THEN
-      END IF
 
-      ! basis functions info
-      ! the mo_set datastructure in active_space_env hold the full
-      ! inactive+active space size, hence we need to get that information
-      ! as well to access the right elements, even though is not part of QCSchema
-      ! TODO: assuming restricted calculation for the time being
-      nspins = active_space_env%nspins
-      IF (nspins > 1) CPABORT("nspins > 1 not supported at the moment")
+         ! query that the active space environment is available
+         IF (.NOT. associated(active_space_env)) CPABORT("active space env not available")
 
-      nel_active   = active_space_env%nelec_active
-      ! nel_inactive = active_space_env%nelec_inactive
-      nmo_active   = SIZE(active_space_env%active_orbitals, dim=1)
-      ! nmo_inactive = size(active_space_env%inactive_orbitals, dim=1)
+         nspins = active_space_env%nspins
 
-      nbasis = active_space_env%mos_active(1)%mo_set%nao
-      ! natom  = active_space_env
+         nao = active_space_env%mos_active(1)%mo_set%nao
+         nmo = SIZE(active_space_env%active_orbitals, dim=1)
+         nel = active_space_env%nelec_active
 
-      ! *** QCSchema properties *** !
+         IF (MOD(nel,2) == 1) THEN
+            nalpha = (nel+1)/2
+            nbeta  = (nel-1)/2
+         ELSE
+            nalpha = nel/2
+            nbeta  = nel/2
+         END IF
 
-      ! general info
-      ! qcschema_env%properties%calcinfo_natom  = natom
-      qcschema_env%properties%calcinfo_nbasis = nbasis
-      qcschema_env%properties%calcinfo_nmo    = nmo_active
-
-      ! This is weird because there is no differentiation
-      ! between alpha and beta electrons for active space calculations
-      ! so just assign half and half?
-      IF (MODULO(nel_active,2) == 1) THEN
-         qcschema_env%properties%calcinfo_nalpha = (nel_active+1)/2
-         qcschema_env%properties%calcinfo_nbeta  = (nel_active-1)/2
       ELSE
-         qcschema_env%properties%calcinfo_nalpha = nel_active/2
-         qcschema_env%properties%calcinfo_nbeta  = nel_active/2
+
+         nspins = dft_control%nspins
+
+         nao = mos(1)%mo_set%nao
+         nmo = mos(1)%mo_set%nmo
+
+         IF (nspins == 1) THEN
+            nalpha = mos(1)%mo_set%nelectron/2
+            nbeta  = nalpha
+         ELSE
+            nalpha = mos(1)%mo_set%nelectron
+            nbeta  = mos(2)%mo_set%nelectron
+         END IF
+
       END IF
 
-      ! qcschema_env%properties%return_energy = qcschema_env%return_result(1)
-      ! TODO: no way to get this one?
-      ! qcschema_env%properties%nuclear_repulsion_energy = 0.0_dp
+      qcschema_env%properties%calcinfo_natom  = natoms
+      qcschema_env%properties%calcinfo_nbasis = nao
+      qcschema_env%properties%calcinfo_nmo    = nmo
+      qcschema_env%properties%calcinfo_nalpha = nalpha
+      qcschema_env%properties%calcinfo_nbeta  = nbeta
 
+      ! energy results
+      qcschema_env%properties%return_energy = energy%total
       ! SCF info
-      ! qcschema_env%properties%scf_total_energy = energy%total
+      qcschema_env%properties%scf_iterations = scf_env%iter_count
+      ! one-electron energy is the sum of all core terms
+      one_el_en = energy%core_overlap + energy%core_self + energy%core
+      qcschema_env%properties%scf_two_electron_energy = one_el_en
+      ! two-electron energy is the sum of hartree and exact exchange (if there)
+      two_el_en = energy%hartree + energy%ex + energy%hartree_1c
+      qcschema_env%properties%scf_one_electron_energy = two_el_en
+      ! xc energy
+      qcschema_env%properties%scf_xc_energy = &
+      energy%exc + energy%exc_aux_fit + energy%exc1 + energy%exc1_aux_fit
+      ! dispersion energy
+      dispersion = energy%dispersion + energy%gcp
+      qcschema_env%properties%scf_dispersion_correction_energy = dispersion
+      ! qcschema_env%properties%scf_vv10_energy
+      ! remove the mp2 part, in case it's non-zero
+      qcschema_env%properties%scf_total_energy = energy%total
 
-      ! *** QCSchema wavefunction *** !
+      ! Some methods of CP2K are not supported by QCSchema, let's warn the user
+      IF (dft_control%smear) CPABORT('WARNING: smearing not supported in QCSchema')
+      IF (dft_control%dft_plus_u) CPABORT('WARNING: DFT+U not supported in QCSchema')
+      IF (dft_control%do_sccs) CPABORT('WARNING: SCCS not supported in QCSchema')
+      IF (qs_env%qmmm) CPABORT('WARNING: QM/MM not supported in QCSchema')
+      IF (dft_control%qs_control%mulliken_restraint) &
+         CPABORT('WARNING: Mulliken restrains not supported in QCSchema')
+      IF (dft_control%qs_control%semi_empirical) &
+         CPABORT('WARNING: semi_empirical methods not supported in QCSchema')
+      IF (dft_control%qs_control%dftb) CPABORT('WARNING: DFTB not supported in QCSchema')
+      IF (dft_control%qs_control%xtb) CPABORT('WARNING: xTB not supported in QCSchema')
+
+      ! MP2 info
+      IF (ASSOCIATED(qs_env%mp2_env)) THEN
+         qcschema_env%properties%mp2 = .TRUE.
+         ! this info is computed on the fly, but not stored!
+         ! qcschema_env%properties%mp2_same_spin_correlation_energy
+         ! qcschema_env%properties%mp2_opposite_spin_correlation_energy
+
+         qcschema_env%properties%mp2_correlation_energy = energy%mp2
+         qcschema_env%properties%mp2_total_energy = energy%total
+
+         ! update the scf energy
+         qcschema_env%properties%scf_total_energy = energy%total - energy%mp2
+      END IF
+
+
+      !========================================================================================!
+      ! *** QCSchema wavefunction ***
+      !========================================================================================!
+
       IF (nspins == 1) THEN
          qcschema_env%wavefunction%restricted = .TRUE.
       ELSE
          qcschema_env%wavefunction%restricted = .FALSE.
       END IF
 
-      i_glb_start = active_space_env%active_orbitals(1, 1)
-      i_glb_end   = active_space_env%active_orbitals(nmo_active, 1)
-      qcschema_env%wavefunction%scf_eigenvalues_a => &
-      active_space_env%mos_active(1)%mo_set%eigenvalues(i_glb_start:i_glb_end)
+      IF (active_space) THEN
 
-      ! the number of active orbitals should be the same for
-      ! both alpha and beta orbitals, so use only alpha
-      IF (nspins == 2) THEN
-         i_glb_start = active_space_env%active_orbitals(1, 2)
-         i_glb_end   = active_space_env%active_orbitals(nmo_active, 2)
+         i_glb_start = active_space_env%active_orbitals(1, 1)
+         i_glb_end   = active_space_env%active_orbitals(nmo, 1)
          qcschema_env%wavefunction%scf_eigenvalues_a => &
          active_space_env%mos_active(1)%mo_set%eigenvalues(i_glb_start:i_glb_end)
+
+         ! the number of active orbitals should be the same for
+         ! both alpha and beta orbitals, so use only alpha
+         IF (nspins == 2) THEN
+            i_glb_start = active_space_env%active_orbitals(1, 2)
+            i_glb_end   = active_space_env%active_orbitals(nmo, 2)
+            qcschema_env%wavefunction%scf_eigenvalues_b => &
+            active_space_env%mos_active(2)%mo_set%eigenvalues(i_glb_start:i_glb_end)
+         END IF
+
+      ELSE
+
+         qcschema_env%wavefunction%scf_eigenvalues_a => mos(1)%mo_set%eigenvalues
+         IF (nspins == 2) THEN
+            qcschema_env%wavefunction%scf_eigenvalues_b => mos(2)%mo_set%eigenvalues
+         END IF
+
       END IF
 
-      IF (ALLOCATED(qcschema_env%wavefunction%scf_fock_mo_a)) THEN
-         DEALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a)
-      END IF
-      ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo_active*nmo_active))
+      ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo*nmo))
       ASSOCIATE (fock => qcschema_env%wavefunction%scf_fock_mo_a)
-      DO j_loc = 1, nmo_active
+      DO j_loc = 1, nmo
          j_glb = active_space_env%active_orbitals(j_loc, 1)
-         DO i_loc = j_loc, nmo_active
+         DO i_loc = j_loc, nmo
             i_glb = active_space_env%active_orbitals(i_loc, 1)
             CALL cp_fm_get_element(active_space_env%fock_sub(1)%matrix, i_glb, j_glb, fval)
-            fock(i_loc + (j_loc-1)*nmo_active) = fval
-            fock(j_loc + (i_loc-1)*nmo_active) = fval
+            fock(i_loc + (j_loc-1)*nmo) = fval
+            fock(j_loc + (i_loc-1)*nmo) = fval
          END DO
       END DO
       END ASSOCIATE
 
 
-      !    qcschema_env%wavefunction%scf_fock_mo_a => active_space_env%fock_sub(1)%matrix
-      ! IF (nspins == 2) THEN
-      !    qcschema_env%wavefunction%scf_fock_mo_b => active_space_env%fock_sub(2)%matrix
-      ! END IF
-
-      ! m = (nspins*(nspins + 1))/2
-      ! DO i = 1,m
-      !    active_space_env%eri%eri(i)%csr_mat
-      ! END DO
+      !========================================================================================!
+      ! *** QCSchema root ***
+      !========================================================================================!
 
       ! driver
       IF (ASSOCIATED(force)) THEN
@@ -596,7 +654,7 @@ MODULE qcschema
       TYPE(cp_logger_type), POINTER             :: logger
       INTEGER                                   :: error, output_unit
       INTEGER(KIND=int_8)                       :: nresult
-      INTEGER(KIND=hid_t)                       :: file_id, space_id, group_id
+      INTEGER(KIND=hid_t)                       :: file_id, group_id
       CHARACTER(LEN=default_path_length)        :: filename
       INTEGER(KIND=hsize_t), DIMENSION(1:1)     :: dims
 
@@ -619,7 +677,7 @@ MODULE qcschema
       ! Root
       ! !===========================================================================!
       ! driver
-      CALL h5awrite_fixlen_string(file_id, 'driver', trim(qcschema_env%driver))
+      CALL h5awrite_fixlen_string(file_id, 'driver', TRIM(qcschema_env%driver))
       ! return result
       nresult = SIZE(qcschema_env%return_result)
       IF (SIZE(qcschema_env%return_result) == 1) THEN
@@ -629,21 +687,21 @@ MODULE qcschema
                                          qcschema_env%return_result, nresult, error)
       END IF
       ! schema name
-      CALL h5awrite_fixlen_string(file_id, 'schema_name', qcschema_env%topology%schema_name)
+      CALL h5awrite_fixlen_string(file_id, 'schema_name', TRIM(qcschema_env%topology%schema_name))
       ! schema version
       CALL h5awrite_integer_scalar(file_id, 'schema_version', qcschema_env%topology%schema_version)
       ! success
       CALL h5awrite_boolean(file_id, 'success', qcschema_env%success)
 
-      ! !===========================================================================!
-      ! Provenance
-      ! !===========================================================================!
+      !========================================================================================!
+      ! *** QCSchema provenance ***
+      !========================================================================================!
       ! create the provenance group
       CALL h5gcreate_f(file_id, 'provenance', group_id, error)
       ! populate provenance
-      CALL h5awrite_fixlen_string(group_id, 'creator', trim(qcschema_env%provenance%creator))
-      CALL h5awrite_fixlen_string(group_id, 'routine', trim(qcschema_env%provenance%routine))
-      CALL h5awrite_fixlen_string(group_id, 'version', trim(qcschema_env%provenance%version))
+      CALL h5awrite_fixlen_string(group_id, 'creator', TRIM(qcschema_env%provenance%creator))
+      CALL h5awrite_fixlen_string(group_id, 'routine', TRIM(qcschema_env%provenance%routine))
+      CALL h5awrite_fixlen_string(group_id, 'version', TRIM(qcschema_env%provenance%version))
       ! close provenance group
       CALL h5gclose_f(group_id, error)
 
@@ -653,22 +711,24 @@ MODULE qcschema
       ! create the molecule group
       CALL h5gcreate_f(file_id, 'molecule', group_id, error)
       ! populate molecule
-      dims(1) = size(qcschema_env%topology%geometry, kind=hsize_t)
-      CALL h5ltmake_dataset_double_f(group_id, 'geometry', 1, dims, &
-                                     qcschema_env%topology%geometry, error)
-      dims(1) = size(qcschema_env%topology%atomic_numbers, kind=hsize_t)
-      CALL h5ltmake_dataset_int_f(group_id, 'atomic_numbers', 1, dims, &
-                                  qcschema_env%topology%atomic_numbers, error)
+      ! dims(1) = size(qcschema_env%topology%geometry, kind=hsize_t)
+      CALL h5awrite_double_simple(group_id, 'geometry', qcschema_env%topology%geometry)
+      ! CALL h5ltmake_dataset_double_f(group_id, 'geometry', 1, dims, &
+      !                                qcschema_env%topology%geometry, error)
+      ! dims(1) = size(qcschema_env%topology%atomic_numbers, kind=hsize_t)
+      CALL h5awrite_integer_simple(group_id, 'atomic_numbers', qcschema_env%topology%atomic_numbers)
+      ! CALL h5ltmake_dataset_int_f(group_id, 'atomic_numbers', 1, dims, &
+                                 !  qcschema_env%topology%atomic_numbers, error)
       CALL h5awrite_integer_scalar(group_id, 'molecular_charge', qcschema_env%topology%molecular_charge)
       CALL h5awrite_integer_scalar(group_id, 'molecular_multiplicity', qcschema_env%topology%molecular_multiplicity)
-      CALL h5dwrite_string_simple(group_id, 'symbols', qcschema_env%topology%symbols)
+      CALL h5awrite_string_simple(group_id, 'symbols', qcschema_env%topology%symbols)
       ! close molecule group
       CALL h5gclose_f(group_id, error)
 
 
-      ! !===========================================================================!
-      ! Properties
-      ! !===========================================================================!
+      !========================================================================================!
+      ! *** QCSchema properties ***
+      !========================================================================================!
       ! create the properties group
       CALL h5gcreate_f(file_id, 'properties', group_id, error)
       ! populate properties
@@ -677,40 +737,57 @@ MODULE qcschema
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nmo',    qcschema_env%properties%calcinfo_nmo   )
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nalpha', qcschema_env%properties%calcinfo_nalpha)
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nbeta',  qcschema_env%properties%calcinfo_nbeta )
+
       ! energies, scf, mp2, ...
       CALL h5awrite_double_scalar(group_id, 'return_energy', qcschema_env%properties%return_energy)
-      CALL h5awrite_double_scalar(group_id, 'nuclear_repulsion_energy', &
-                                  qcschema_env%properties%nuclear_repulsion_energy)
-      CALL h5awrite_integer_scalar(group_id, 'scf_iterations', qcschema_env%properties%scf_iterations)
-      CALL h5awrite_double_scalar(group_id, 'scf_one_electron_energy', &
-                                  qcschema_env%properties%scf_one_electron_energy)
-      CALL h5awrite_double_scalar(group_id, 'scf_two_electron_energy', &
-                                  qcschema_env%properties%scf_two_electron_energy)
       CALL h5awrite_double_scalar(group_id, 'scf_total_energy', qcschema_env%properties%scf_total_energy)
+
+      IF (qcschema_env%properties%nuclear_repulsion_energy /= 0.0_dp) THEN
+         CALL h5awrite_double_scalar(group_id, 'nuclear_repulsion_energy', &
+                                     qcschema_env%properties%nuclear_repulsion_energy)
+      END IF
+
+      IF (qcschema_env%properties%scf_iterations /= 0) THEN
+         CALL h5awrite_integer_scalar(group_id, 'scf_iterations', qcschema_env%properties%scf_iterations)
+      END IF
+
+      IF (qcschema_env%properties%scf_one_electron_energy /= 0.0_dp) THEN
+         CALL h5awrite_double_scalar(group_id, 'scf_one_electron_energy', &
+                                     qcschema_env%properties%scf_one_electron_energy)
+      END IF
+
+      IF (qcschema_env%properties%scf_two_electron_energy /= 0.0_dp) THEN
+         CALL h5awrite_double_scalar(group_id, 'scf_two_electron_energy', &
+                                     qcschema_env%properties%scf_two_electron_energy)
+      END IF
+
       IF (qcschema_env%properties%scf_xc_energy /= 0.0_dp) THEN
          CALL h5awrite_double_scalar(group_id, 'scf_xc_energy', &
                                      qcschema_env%properties%scf_xc_energy)
       END IF
+
       IF (qcschema_env%properties%scf_dispersion_correction_energy /= 0.0_dp) THEN
          CALL h5awrite_double_scalar(group_id, 'scf_dispersion_correction_energy', &
                                      qcschema_env%properties%scf_dispersion_correction_energy)
       END IF
+
       IF (qcschema_env%properties%mp2) THEN
          CALL h5awrite_double_scalar(group_id, 'mp2_correlation_energy', &
                                      qcschema_env%properties%mp2_correlation_energy)
       END IF
+
       ! close properties group
       CALL h5gclose_f(group_id, error)
 
-      ! !===========================================================================!
-      ! Wavefunction
-      ! !===========================================================================!
+      !========================================================================================!
+      ! *** QCSchema wavefunction ***
+      !========================================================================================!
       ! create the wavefunction group
       CALL h5gcreate_f(file_id, 'wavefunction', group_id, error)
       dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_a, kind=hsize_t)
       CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_a', 1, dims, &
                                      qcschema_env%wavefunction%scf_eigenvalues_a, error)
-      IF (.NOT. qcschema_env%wavefunction%restricted) THEN
+      IF (ASSOCIATED(qcschema_env%wavefunction%scf_eigenvalues_b)) THEN
          dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_b, kind=hsize_t)
          CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_b', 1, dims, &
                                         qcschema_env%wavefunction%scf_eigenvalues_b, error)
@@ -724,10 +801,13 @@ MODULE qcschema
       ! close wavefunction group
       CALL h5gclose_f(group_id, error)
 
+      !========================================================================================!
+      ! *** QCSchema model ***
+      !========================================================================================!
       ! create the model group
       CALL h5gcreate_f(file_id, 'model', group_id, error)
-      CALL h5screate_f(h5s_scalar_f, space_id, error)
-      CALL h5sclose_f(space_id, error)
+      ! CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%basis_set%name))
+      ! CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%method))
       ! close model group
       CALL h5gclose_f(group_id, error)
 
@@ -1057,7 +1137,7 @@ MODULE qcschema
       ! create a fixed-length string datatype
       CALL h5tcopy_f(H5T_C_S1, type_id, error)
       CAll h5tset_cset_f(type_id, H5T_CSET_UTF8_F, error)
-      CALL h5tset_size_f(type_id, LEN(attr_data, int_8), error)
+      CALL h5tset_size_f(type_id, LEN(attr_data, size_t), error)
 
       ! create the attribute
       CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
@@ -1242,15 +1322,11 @@ MODULE qcschema
       REAL(KIND=dp), INTENT(IN), TARGET      :: attr_data
       INTEGER(KIND=hid_t)                    :: space_id, attr_id, type_id
       TYPE(c_ptr)                            :: buffer
-      INTEGER                                :: error, output_unit
+      INTEGER                                :: error
 
       ! create a scalar dataspace
       CALL h5screate_f(H5S_SCALAR_F, space_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: creation of HDF5 dataspace failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 dataspace failed')
 
       ! the C pointer to the actual data
       buffer = C_LOC(attr_data)
@@ -1260,104 +1336,148 @@ MODULE qcschema
 
       ! create the attribute
       CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: creation of HDF5 attribute failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 attribute failed')
 
       ! write the string attribute to file
       CALL h5awrite_f(attr_id, type_id, buffer, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: writing of HDF5 attribute failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: writing of HDF5 attribute failed')
 
       ! close attribute
       CALL h5aclose_f(attr_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: closing of HDF5 attribute failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 attribute failed')
 
       ! close dataspace
       CALL h5sclose_f(space_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: closing of HDF5 dataspace failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
 
    END SUBROUTINE h5awrite_double_scalar
 
 
-   SUBROUTINE h5dwrite_string_simple(loc_id, dset_name, dset_data)
-      INTEGER(KIND=hid_t), INTENT(IN)              :: loc_id
-      CHARACTER(LEN=*), INTENT(IN)                 :: dset_name
-      CHARACTER(LEN=*), INTENT(IN), DIMENSION(:)   :: dset_data
-      INTEGER(KIND=hid_t)                          :: space_id, dset_id, type_id
-      INTEGER                                      :: error, output_unit
-      INTEGER(KIND=hsize_t), DIMENSION(1:1)        :: dims
+   SUBROUTINE h5awrite_string_simple(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)                    :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)                       :: attr_name
+      CHARACTER(LEN=*), INTENT(IN), DIMENSION(:), TARGET :: attr_data
+      INTEGER(KIND=hid_t)                          :: space_id, attr_id, type_id
+      INTEGER                                      :: error
+      TYPE(c_ptr)                                  :: buffer
+      INTEGER(KIND=hsize_t), DIMENSION(2)          :: dims
+
+      dims(1) = LEN(attr_data(1), kind=hsize_t) ! length of a string entry
+      dims(2) = SIZE(attr_data, kind=hsize_t)   ! length of array of strings
 
       ! create a fixed-length string datatype
       CALL h5tcopy_f(H5T_C_S1, type_id, error)
       CAll h5tset_cset_f(type_id, H5T_CSET_UTF8_F, error)
-      CALL h5tset_size_f(type_id, LEN(dset_data(1), kind=hsize_t), error)
-      ! CALL h5tset_size_f(type_id, 2_hsize_t, error)
-
-      dims(1) = size(dset_data, kind=hsize_t)
+      CALL h5tset_size_f(type_id, dims(1), error)
 
       ! create a simple dataspace
-      CALL h5screate_simple_f(1, dims, space_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: creation of HDF5 dataspace failed'
-         RETURN
-      ENDIF
+      CALL h5screate_simple_f(1, dims(2:2), space_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 dataspace failed')
 
-      ! create the dataset
-      CALL h5dcreate_f(loc_id, dset_name, type_id, space_id, dset_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: creation of HDF5 dataset failed'
-         RETURN
-      ENDIF
+      ! create the atrtibute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 attribute failed')
 
-      ! write the string attribute to file
-      CALL h5dwrite_f(dset_id, type_id, dset_data, dims, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: writing of HDF5 dataset failed'
-         RETURN
-      ENDIF
+      ! the actual pointer to be passed
+      buffer = C_LOC(attr_data(1))
+
+      ! write the string array attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) CPABORT('ERROR: writing of HDF5 attribute failed')
 
       ! close attribute
-      CALL h5dclose_f(dset_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: closing of HDF5 dataset failed'
-         RETURN
-      ENDIF
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 attribute failed')
 
       ! close dataspace
       CALL h5sclose_f(space_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: closing of HDF5 dataspace failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
 
       ! close datatype
       CALL h5tclose_f(type_id, error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: closing of HDF5 datatype failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 datatype failed')
 
-   END SUBROUTINE h5dwrite_string_simple
+   END SUBROUTINE h5awrite_string_simple
+
+
+   SUBROUTINE h5awrite_double_simple(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)                 :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)                    :: attr_name
+      REAL(KIND=dp), INTENT(IN), DIMENSION(:), TARGET :: attr_data
+      INTEGER(KIND=hid_t)                             :: space_id, attr_id, type_id
+      INTEGER                                         :: error
+      TYPE(c_ptr)                                     :: buffer
+      INTEGER(KIND=hsize_t), DIMENSION(1)             :: dims
+
+      dims(1) = SIZE(attr_data, kind=hsize_t)   ! length of array of strings
+
+      ! set the type of data
+      type_id = H5T_NATIVE_DOUBLE
+
+      ! create a simple dataspace
+      CALL h5screate_simple_f(1, dims, space_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 dataspace failed')
+
+      ! create the atrtibute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 attribute failed')
+
+      ! the actual pointer to be passed
+      buffer = C_LOC(attr_data(1))
+
+      ! write the string array attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) CPABORT('ERROR: writing of HDF5 attribute failed')
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 attribute failed')
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
+
+   END SUBROUTINE h5awrite_double_simple
+
+
+   SUBROUTINE h5awrite_integer_simple(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)                 :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)                    :: attr_name
+      INTEGER, INTENT(IN), DIMENSION(:), TARGET       :: attr_data
+      INTEGER(KIND=hid_t)                             :: space_id, attr_id, type_id
+      INTEGER                                         :: error
+      TYPE(c_ptr)                                     :: buffer
+      INTEGER(KIND=hsize_t), DIMENSION(1)             :: dims
+
+      dims(1) = SIZE(attr_data, kind=hsize_t)   ! length of array of strings
+
+      ! set the type of data
+      type_id = H5T_NATIVE_INTEGER
+
+      ! create a simple dataspace
+      CALL h5screate_simple_f(1, dims, space_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 dataspace failed')
+
+      ! create the atrtibute
+      CALL h5acreate_f(loc_id, attr_name, type_id, space_id, attr_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 attribute failed')
+
+      ! the actual pointer to be passed
+      buffer = C_LOC(attr_data(1))
+
+      ! write the string array attribute to file
+      CALL h5awrite_f(attr_id, type_id, buffer, error)
+      IF (error < 0) CPABORT('ERROR: writing of HDF5 attribute failed')
+
+      ! close attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 attribute failed')
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
+
+   END SUBROUTINE h5awrite_integer_simple
 
 
    ! SUBROUTINE qcschema_env_release
