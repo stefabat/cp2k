@@ -391,20 +391,19 @@ MODULE qcschema
       LOGICAL, INTENT(IN)                                :: active_space
       TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(cp_logger_type), POINTER                      :: logger
-
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
-      ! TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      ! TYPE(mp2_type), POINTER                            :: mp2_env
+      TYPE(qs_ks_env_type), POINTER                      :: ks_env
+      TYPE(mp2_type), POINTER                            :: mp2_env
       TYPE(dft_control_type), POINTER                    :: dft_control
       INTEGER :: handle, output_unit, natoms, nspins, nmo, nao, nel, &
-                 nalpha, nbeta, i_loc, j_loc, i_glb, j_glb, i_glb_start, i_glb_end, &
+                 nalpha, nbeta, i_glb_start, i_glb_end, &
                  atomic_number, iatom
       CHARACTER(Len=2) :: atomic_symbol
-      REAL(KIND=dp) :: fval, dispersion, one_el_en, two_el_en
+      REAL(KIND=dp) :: dispersion, one_el_en, two_el_en
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
       CALL timeset(routineN, handle)
@@ -417,16 +416,11 @@ MODULE qcschema
 
       ! collect environment info
       IF (ASSOCIATED(qs_env)) THEN
-         ! CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, &
-         !                 dft_control=dft_control, force=force, &
-         !                 mos=mos, particle_set=particle_set, &
-         !                 scf_env=scf_env, mp2_env=mp2_env, &
-         !                 active_space=active_space_env)
-         CALL get_qs_env(qs_env, particle_set=particle_set, &
-                                 dft_control=dft_control, &
-                                 force=force, mos=mos, &
-                                 energy=energy, scf_env=scf_env, &
-                                 active_space=active_space_env)
+         CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, &
+                         dft_control=dft_control, force=force, &
+                         mos=mos, particle_set=particle_set, &
+                         scf_env=scf_env, mp2_env=mp2_env, &
+                         active_space=active_space_env)
       ELSE
          CPABORT("QS environment not associated, QCSchema interface quitting")
       END IF
@@ -599,17 +593,16 @@ MODULE qcschema
       END IF
 
       ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo*nmo))
-      ASSOCIATE (fock => qcschema_env%wavefunction%scf_fock_mo_a)
-      DO j_loc = 1, nmo
-         j_glb = active_space_env%active_orbitals(j_loc, 1)
-         DO i_loc = j_loc, nmo
-            i_glb = active_space_env%active_orbitals(i_loc, 1)
-            CALL cp_fm_get_element(active_space_env%fock_sub(1)%matrix, i_glb, j_glb, fval)
-            fock(i_loc + (j_loc-1)*nmo) = fval
-            fock(j_loc + (i_loc-1)*nmo) = fval
-         END DO
-      END DO
-      END ASSOCIATE
+
+
+      IF (active_space) THEN
+         i_glb_start = active_space_env%active_orbitals(1, 1)
+         i_glb_end   = active_space_env%active_orbitals(nmo, 1)
+         CALL subspace_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
+            qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
+      ELSE
+      END IF
+
 
 
       !========================================================================================!
@@ -647,6 +640,32 @@ MODULE qcschema
       CALL timestop(handle)
 
    END SUBROUTINE create_qcschema_from_active_space
+
+
+   SUBROUTINE subspace_matrix_to_array(source_matrix, target_array, start_idx, end_idx)
+      INTEGER, INTENT(IN)                                :: start_idx, end_idx
+      TYPE(cp_fm_type), INTENT(IN)                       :: source_matrix
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: target_array
+
+      INTEGER                                            :: i, j, i_glb, j_glb, norb
+      REAL(KIND=dp)                                      :: mval
+
+      CPASSERT(end_idx >= start_idx)
+
+      norb = end_idx - start_idx + 1
+
+      CPASSERT(SIZE(target_array) == norb*norb)
+
+      DO j = 1, norb
+         j_glb = start_idx + j -1
+         DO i = j, norb
+            i_glb = start_idx + i -1
+            CALL cp_fm_get_element(source_matrix, i_glb, j_glb, mval)
+            target_array(i + (j-1)*norb) = mval
+            target_array(j + (i-1)*norb) = mval
+         END DO
+      END DO
+   END SUBROUTINE subspace_matrix_to_array
 
 
    SUBROUTINE qcschema_to_hdf5(qcschema_env)
