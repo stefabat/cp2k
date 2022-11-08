@@ -20,12 +20,14 @@ MODULE qcschema
    USE cp_log_handling,                ONLY: cp_get_default_logger, &
                                              cp_logger_get_default_io_unit, &
                                              cp_logger_type
+   USE dbcsr_api,                      ONLY: dbcsr_csr_type
    USE kinds,                          ONLY: dp, default_string_length, &
                                              default_path_length, int_8, int_4
    USE mp2_types,                      ONLY: mp2_type
    USE particle_types,                 ONLY: particle_type
    USE periodic_table,                 ONLY: get_ptable_info
-   USE qs_active_space_types,          ONLY: active_space_type
+   USE qs_active_space_types,          ONLY: active_space_type, csr_idx_to_combined, &
+                                             eri_type, get_irange_csr, csr_idx_from_combined
    USE qs_force_types,                 ONLY: qs_force_type
    USE qs_ks_types,                    ONLY: qs_ks_env_type
    USE qs_mo_types,                    ONLY: mo_set_p_type, get_mo_set
@@ -267,11 +269,11 @@ MODULE qcschema
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_occupations_b => Null()
 
       ! ERI should be arrays of doubles, but in Qiskit are simple strings?
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri       => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_aa => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_ab => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_ba => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eri_mo_bb => Null()
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_aa
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ab
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ba
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_bb
 
       ! Quantities with localized orbitals. All `nmo` orbitals are included,
       ! even if only a subset were localized
@@ -564,6 +566,11 @@ MODULE qcschema
             qcschema_env%wavefunction%scf_orbitals_b, nao, nmo, i_glb_start, i_glb_end)
       END IF
 
+      ! get the eri
+      ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa(nmo**4))
+      CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_aa, &
+                        active_space_env%active_orbitals, 1, 1, output_unit)
+
 
       !========================================================================================!
       ! *** QCSchema root ***
@@ -639,6 +646,10 @@ MODULE qcschema
 
       IF (ALLOCATED(qcschema_env%wavefunction%scf_orbitals_b)) THEN
          DEALLOCATE (qcschema_env%wavefunction%scf_orbitals_b)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_eri_mo_aa)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa)
       END IF
 
    END SUBROUTINE qcschema_env_release
@@ -923,6 +934,59 @@ MODULE qcschema
          END DO
       END DO
    END SUBROUTINE subspace_full_matrix_to_array
+
+! **************************************************************************************************
+!> \brief Copy the eri tensor for spins isp1 and isp2 to a standard 1D Fortran array
+!> \param eri the eri tensor in dbcsr format
+!> \param array the 1D Fortran array where the eri are copied to
+!> \param isp1 the spin of the bra
+!> \param isp2 the spin of the ket
+! **************************************************************************************************
+   SUBROUTINE eri_to_array(eri_env, array, active_orbitals, isp1, isp2, iw)
+      TYPE(eri_type), INTENT(IN)                         :: eri_env
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: array
+      INTEGER, DIMENSION(:, :), INTENT(IN)               :: active_orbitals
+      INTEGER, INTENT(IN)                                :: isp1, isp2, iw
+
+      ! TYPE(dbcsr_csr_type), POINTER                      :: eri
+      INTEGER                                            :: i1, i2, i3, i4, &
+                                                            m1, m2, m3, m4, &
+                                                            i12, i12l, i34, i34l, &
+                                                            nmo_active, nmo_total, &
+                                                            nindex, irptr
+      INTEGER, DIMENSION(2)                              :: irange
+      REAL(KIND=dp)                                      :: erival
+
+      nmo_active = SIZE(active_orbitals, 1)
+      nmo_total = eri_env%norb
+      nindex = (nmo_total*(nmo_total + 1))/2
+      ASSOCIATE (eri => eri_env%eri(1)%csr_mat)
+      ! irange does not get anything meaningful
+      irange = get_irange_csr(nmo_total, eri%mp_group)
+
+      array(1) = 0
+
+      DO m1 = 1, nmo_active
+         i1 = active_orbitals(m1, isp1)
+         DO m2 = m1, nmo_active
+            i2 = active_orbitals(m2, isp1)
+            i12 = csr_idx_to_combined(i1, i2, nmo_total)
+            IF (i12 >= irange(1) .AND. i12 <= irange(2)) THEN
+               i12l = i12 - irange(1) + 1
+               irptr = eri%rowptr_local(i12l) - 1
+               DO i34l = 1, eri%nzerow_local(i12l)
+                  i34 = eri%colind_local(irptr + i34l)
+                  CALL csr_idx_from_combined(i34, nmo_total, i3, i4)
+                  erival = eri%nzval_local%r_dp(irptr + i34l)
+                  WRITE (iw, "(T4,'ERI_QCS|',T20,2I4,' [',I1,']',2I4,' [',I1,']',T58,G20.14)") &
+                     m1, m2, isp1, m3, m4, isp2, erival
+               END DO
+            END IF
+         END DO
+      END DO
+      END ASSOCIATE
+
+   END SUBROUTINE eri_to_array
 
 
    SUBROUTINE h5awrite_varlen_string(loc_id, attr_name, attr_data)
