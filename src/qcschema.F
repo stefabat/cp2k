@@ -13,7 +13,6 @@
 ! **************************************************************************************************
 MODULE qcschema
 
-   ! USE json_module,                    ONLY: json_core, json_value
    USE atomic_kind_types,              ONLY: get_atomic_kind
    USE cp2k_info,                      ONLY: cp2k_version
    USE cp_control_types,               ONLY: dft_control_type
@@ -64,8 +63,7 @@ MODULE qcschema
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
    PUBLIC :: qcschema_type
-   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5, &
-             create_qcschema_from_active_space
+   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5
 
 
 ! **************************************************************************************************
@@ -247,8 +245,8 @@ MODULE qcschema
       CHARACTER(LEN=default_string_length)         :: eri_mo_bb
 
       ! SCF quantities in AO or MO basis
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_orbitals_a    => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_orbitals_b    => Null()
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_a
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_b
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_a     => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_b     => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_mo_a  => Null()
@@ -303,8 +301,8 @@ MODULE qcschema
 
       REAL(KIND=dp) :: return_energy = 0.0_dp
 
-      INTEGER :: calcinfo_nbasis = 0
-      INTEGER :: calcinfo_nmo    = 0
+      INTEGER :: calcinfo_nbasis = 0 ! AO basis size
+      INTEGER :: calcinfo_nmo    = 0 ! MO basis size
       INTEGER :: calcinfo_nalpha = 0 ! # of alpha electrons
       INTEGER :: calcinfo_nbeta  = 0 ! # of beta electrons
       INTEGER :: calcinfo_natom  = 0
@@ -318,8 +316,7 @@ MODULE qcschema
       REAL(KIND=dp) :: scf_xc_energy                    = 0.0_dp
       REAL(KIND=dp) :: scf_dispersion_correction_energy = 0.0_dp
       REAL(KIND=dp) :: scf_total_energy                 = 0.0_dp
-      ! the dipole moment is calculated on the fly and not stored,
-      ! so I just don't care about it
+      ! the dipole moment is calculated on the fly and not stored
       ! REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment  = 0.0_dp
 
       ! MP2 results
@@ -330,33 +327,11 @@ MODULE qcschema
       ! these are the only two that are saved
       REAL(KIND=dp) :: mp2_correlation_energy = 0.0_dp
       REAL(KIND=dp) :: mp2_total_energy       = 0.0_dp
-      ! the dipole moment is calculated on the fly and not stored,
-      ! so I just don't care about it
+      ! the dipole moment is calculated on the fly and not stored
       ! REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment = 0.0_dp
 
       ! internal flags to know the type of calculation
       LOGICAL :: mp2 = .FALSE.
-
-      ! do we really need CC stuff?
-      ! REAL(KIND=dp) :: ccsd_same_spin_correlation_energy
-      ! REAL(KIND=dp) :: ccsd_opposite_spin_correlation_energy
-      ! REAL(KIND=dp) :: ccsd_singles_energy
-      ! REAL(KIND=dp) :: ccsd_doubles_energy
-      ! REAL(KIND=dp) :: ccsd_correlation_energy
-      ! REAL(KIND=dp) :: ccsd_total_energy
-      ! REAL(KIND=dp) :: ccsd_prt_pr_correlation_energy
-      ! REAL(KIND=dp) :: ccsd_prt_pr_total_energy
-      ! REAL(KIND=dp) :: ccsdt_correlation_energy
-      ! REAL(KIND=dp) :: ccsdt_total_energy
-      ! REAL(KIND=dp) :: ccsdtq_correlation_energy
-      ! REAL(KIND=dp) :: ccsdtq_total_energy
-      ! REAL(KIND=dp), DIMENSION(3) :: ccsd_dipole_moment
-      ! REAL(KIND=dp), DIMENSION(3) :: ccsd_prt_pr_dipole_moment
-      ! REAL(KIND=dp), DIMENSION(3) :: ccsdt_dipole_moment
-      ! REAL(KIND=dp), DIMENSION(3) :: ccsdtq_dipole_moment
-      ! INTEGER :: ccsd_iterations
-      ! INTEGER :: ccsdt_iterations
-      ! INTEGER :: ccsdtq_iterations
 
    END TYPE qcschema_properties
 
@@ -381,14 +356,13 @@ MODULE qcschema
 
 
 ! **************************************************************************************************
-!> \brief Create and initialize a qcschema object from an active space environment
+!> \brief Create and initialize a qcschema object from a quickstep environment
 !> \param qcschema_env the qcschema environment to populate
-!> \param active_space_env the as environment with all the info of the computation
+!> \param qs_env the qs environment with all the info of the computation
 ! **************************************************************************************************
-   SUBROUTINE create_qcschema_from_active_space(qcschema_env, qs_env, active_space)
+   SUBROUTINE qcschema_env_create(qcschema_env, qs_env)
       TYPE(qcschema_type), INTENT(INOUT)                 :: qcschema_env
       TYPE(qs_environment_type), INTENT(IN), POINTER     :: qs_env
-      LOGICAL, INTENT(IN)                                :: active_space
       TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
@@ -423,6 +397,11 @@ MODULE qcschema
                          active_space=active_space_env)
       ELSE
          CPABORT("QS environment not associated, QCSchema interface quitting")
+      END IF
+
+      ! we need the AS environemnt to get all the SCF data
+      IF (.NOT. ASSOCIATED(active_space_env)) THEN
+         CPABORT("Active space environment not associated, QCSchema interface quitting")
       END IF
 
       !========================================================================================!
@@ -468,40 +447,19 @@ MODULE qcschema
       ! *** QCSchema properties ***
       !========================================================================================!
 
-      IF (active_space) THEN
+      nspins = active_space_env%nspins
 
-         ! query that the active space environment is available
-         IF (.NOT. associated(active_space_env)) CPABORT("active space env not available")
+      nao = active_space_env%mos_active(1)%mo_set%nao
+      nmo = SIZE(active_space_env%active_orbitals, dim=1)
+      nel = active_space_env%nelec_active
 
-         nspins = active_space_env%nspins
-
-         nao = active_space_env%mos_active(1)%mo_set%nao
-         nmo = SIZE(active_space_env%active_orbitals, dim=1)
-         nel = active_space_env%nelec_active
-
-         IF (MOD(nel,2) == 1) THEN
-            nalpha = (nel+1)/2
-            nbeta  = (nel-1)/2
-         ELSE
-            nalpha = nel/2
-            nbeta  = nel/2
-         END IF
-
+      ! TODO: I think this info should be on the AS env
+      IF (MOD(nel,2) == 1) THEN
+         nalpha = (nel+1)/2
+         nbeta  = (nel-1)/2
       ELSE
-
-         nspins = dft_control%nspins
-
-         nao = mos(1)%mo_set%nao
-         nmo = mos(1)%mo_set%nmo
-
-         IF (nspins == 1) THEN
-            nalpha = mos(1)%mo_set%nelectron/2
-            nbeta  = nalpha
-         ELSE
-            nalpha = mos(1)%mo_set%nelectron
-            nbeta  = mos(2)%mo_set%nelectron
-         END IF
-
+         nalpha = nel/2
+         nbeta  = nel/2
       END IF
 
       qcschema_env%properties%calcinfo_natom  = natoms
@@ -512,6 +470,7 @@ MODULE qcschema
 
       ! energy results
       qcschema_env%properties%return_energy = energy%total
+      qcschema_env%properties%scf_total_energy = energy%total
       ! SCF info
       qcschema_env%properties%scf_iterations = scf_env%iter_count
       ! one-electron energy is the sum of all core terms
@@ -526,9 +485,6 @@ MODULE qcschema
       ! dispersion energy
       dispersion = energy%dispersion + energy%gcp
       qcschema_env%properties%scf_dispersion_correction_energy = dispersion
-      ! qcschema_env%properties%scf_vv10_energy
-      ! remove the mp2 part, in case it's non-zero
-      qcschema_env%properties%scf_total_energy = energy%total
 
       ! Some methods of CP2K are not supported by QCSchema, let's warn the user
       IF (dft_control%smear) CPABORT('WARNING: smearing not supported in QCSchema')
@@ -567,42 +523,46 @@ MODULE qcschema
          qcschema_env%wavefunction%restricted = .FALSE.
       END IF
 
-      IF (active_space) THEN
-
-         i_glb_start = active_space_env%active_orbitals(1, 1)
-         i_glb_end   = active_space_env%active_orbitals(nmo, 1)
-         qcschema_env%wavefunction%scf_eigenvalues_a => &
-         active_space_env%mos_active(1)%mo_set%eigenvalues(i_glb_start:i_glb_end)
-
-         ! the number of active orbitals should be the same for
-         ! both alpha and beta orbitals, so use only alpha
-         IF (nspins == 2) THEN
-            i_glb_start = active_space_env%active_orbitals(1, 2)
-            i_glb_end   = active_space_env%active_orbitals(nmo, 2)
-            qcschema_env%wavefunction%scf_eigenvalues_b => &
-            active_space_env%mos_active(2)%mo_set%eigenvalues(i_glb_start:i_glb_end)
-         END IF
-
-      ELSE
-
-         qcschema_env%wavefunction%scf_eigenvalues_a => mos(1)%mo_set%eigenvalues
-         IF (nspins == 2) THEN
-            qcschema_env%wavefunction%scf_eigenvalues_b => mos(2)%mo_set%eigenvalues
-         END IF
-
-      END IF
+      ! get the right indices to extract the MO information
+      i_glb_start = active_space_env%active_orbitals(1, 1)
+      i_glb_end   = active_space_env%active_orbitals(nmo, 1)
+      ! alpha MO energies
+      qcschema_env%wavefunction%scf_eigenvalues_a => &
+      active_space_env%mos_active(1)%mo_set%eigenvalues(i_glb_start:i_glb_end)
+      ! alpha MO occupations
+      qcschema_env%wavefunction%scf_occupations_a => &
+      active_space_env%mos_active(1)%mo_set%occupation_numbers(i_glb_start:i_glb_end)
 
       ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo*nmo))
+      ! alpha Fock matrix
+      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
+         qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
 
+      ALLOCATE (qcschema_env%wavefunction%scf_orbitals_a(nao*nmo))
+      ! alpha MOs coefficients
+      CALL subspace_full_matrix_to_array(active_space_env%mos_active(1)%mo_set%mo_coeff, &
+         qcschema_env%wavefunction%scf_orbitals_a, nao, nmo, 1, i_glb_start)
 
-      IF (active_space) THEN
-         i_glb_start = active_space_env%active_orbitals(1, 1)
-         i_glb_end   = active_space_env%active_orbitals(nmo, 1)
-         CALL subspace_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
-            qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
-      ELSE
+      IF (nspins == 2) THEN
+         i_glb_start = active_space_env%active_orbitals(1, 2)
+         i_glb_end   = active_space_env%active_orbitals(nmo, 2)
+         ! beta MO energies
+         qcschema_env%wavefunction%scf_eigenvalues_b => &
+         active_space_env%mos_active(2)%mo_set%eigenvalues(i_glb_start:i_glb_end)
+         ! beta MO occupations
+         qcschema_env%wavefunction%scf_occupations_b => &
+         active_space_env%mos_active(2)%mo_set%occupation_numbers(i_glb_start:i_glb_end)
+
+         ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_b(nmo*nmo))
+         ! beta Fock matrix
+         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2)%matrix, &
+            qcschema_env%wavefunction%scf_fock_mo_b, i_glb_start, i_glb_end)
+
+         ALLOCATE (qcschema_env%wavefunction%scf_orbitals_b(nao*nmo))
+         ! alpha MOs coefficients
+         CALL subspace_full_matrix_to_array(active_space_env%mos_active(2)%mo_set%mo_coeff, &
+            qcschema_env%wavefunction%scf_orbitals_b, nao, nmo, i_glb_start, i_glb_end)
       END IF
-
 
 
       !========================================================================================!
@@ -639,35 +599,55 @@ MODULE qcschema
 
       CALL timestop(handle)
 
-   END SUBROUTINE create_qcschema_from_active_space
+   END SUBROUTINE qcschema_env_create
 
 
-   SUBROUTINE subspace_matrix_to_array(source_matrix, target_array, start_idx, end_idx)
-      INTEGER, INTENT(IN)                                :: start_idx, end_idx
-      TYPE(cp_fm_type), INTENT(IN)                       :: source_matrix
-      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: target_array
+! **************************************************************************************************
+!> \brief Releases the allocated memory of a qcschema environment
+!> \param qcschema_env the qcschema environment to release
+! **************************************************************************************************
+   SUBROUTINE qcschema_env_release(qcschema_env)
+      TYPE(qcschema_type), INTENT(INOUT)      :: qcschema_env
 
-      INTEGER                                            :: i, j, i_glb, j_glb, norb
-      REAL(KIND=dp)                                      :: mval
+      IF (ALLOCATED(qcschema_env%return_result)) THEN
+         DEALLOCATE (qcschema_env%return_result)
+      END IF
 
-      CPASSERT(end_idx >= start_idx)
+      IF (ALLOCATED(qcschema_env%topology%atomic_numbers)) THEN
+         DEALLOCATE (qcschema_env%topology%atomic_numbers)
+      END IF
 
-      norb = end_idx - start_idx + 1
+      IF (ALLOCATED(qcschema_env%topology%geometry)) THEN
+         DEALLOCATE (qcschema_env%topology%geometry)
+      END IF
 
-      CPASSERT(SIZE(target_array) == norb*norb)
+      IF (ALLOCATED(qcschema_env%topology%symbols)) THEN
+         DEALLOCATE (qcschema_env%topology%symbols)
+      END IF
 
-      DO j = 1, norb
-         j_glb = start_idx + j -1
-         DO i = j, norb
-            i_glb = start_idx + i -1
-            CALL cp_fm_get_element(source_matrix, i_glb, j_glb, mval)
-            target_array(i + (j-1)*norb) = mval
-            target_array(j + (i-1)*norb) = mval
-         END DO
-      END DO
-   END SUBROUTINE subspace_matrix_to_array
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_fock_mo_a)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_fock_mo_b)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_fock_mo_b)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_orbitals_a)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_orbitals_a)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_orbitals_b)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_orbitals_b)
+      END IF
+
+   END SUBROUTINE qcschema_env_release
 
 
+! **************************************************************************************************
+!> \brief Writes a qcschema object to an hdf5 file
+!> \param qcschema_env the qcschema environment to write to file
+! **************************************************************************************************
    SUBROUTINE qcschema_to_hdf5(qcschema_env)
       TYPE(qcschema_type), INTENT(IN)           :: qcschema_env
       TYPE(cp_logger_type), POINTER             :: logger
@@ -689,11 +669,11 @@ MODULE qcschema
       ENDIF
 
       filename = TRIM(logger%iter_info%project_name) // '.qcschema.hdf5'
-      ! filename = '/home/stefano/Downloads/test.hdf5'
       CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
 
+
       ! !===========================================================================!
-      ! Root
+      ! *** Root group ***
       ! !===========================================================================!
       ! driver
       CALL h5awrite_fixlen_string(file_id, 'driver', TRIM(qcschema_env%driver))
@@ -712,6 +692,7 @@ MODULE qcschema
       ! success
       CALL h5awrite_boolean(file_id, 'success', qcschema_env%success)
 
+
       !========================================================================================!
       ! *** QCSchema provenance ***
       !========================================================================================!
@@ -723,6 +704,7 @@ MODULE qcschema
       CALL h5awrite_fixlen_string(group_id, 'version', TRIM(qcschema_env%provenance%version))
       ! close provenance group
       CALL h5gclose_f(group_id, error)
+
 
       !========================================================================================!
       ! *** QCSchema molecule ***
@@ -798,27 +780,57 @@ MODULE qcschema
       ! close properties group
       CALL h5gclose_f(group_id, error)
 
+
       !========================================================================================!
       ! *** QCSchema wavefunction ***
       !========================================================================================!
       ! create the wavefunction group
       CALL h5gcreate_f(file_id, 'wavefunction', group_id, error)
+
       dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_a, kind=hsize_t)
       CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_a', 1, dims, &
                                      qcschema_env%wavefunction%scf_eigenvalues_a, error)
-      IF (ASSOCIATED(qcschema_env%wavefunction%scf_eigenvalues_b)) THEN
-         dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_b, kind=hsize_t)
-         CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_b', 1, dims, &
-                                        qcschema_env%wavefunction%scf_eigenvalues_b, error)
-      END IF
+
+      dims(1) = size(qcschema_env%wavefunction%scf_occupations_a, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'scf_occupations_a', 1, dims, &
+                                     qcschema_env%wavefunction%scf_occupations_a, error)
 
       ASSOCIATE (fock => qcschema_env%wavefunction%scf_fock_mo_a)
       dims(1) = size(fock, kind=hsize_t)
       CALL h5ltmake_dataset_double_f(group_id, 'scf_fock_mo_a', 1, dims, fock, error)
       END ASSOCIATE
 
+      ASSOCIATE (mos => qcschema_env%wavefunction%scf_orbitals_a)
+      dims(1) = size(mos, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'scf_orbitals_a', 1, dims, mos, error)
+      END ASSOCIATE
+
+      IF (.NOT. qcschema_env%wavefunction%restricted) THEN
+         CPASSERT(ASSOCIATED(qcschema_env%wavefunction%scf_eigenvalues_b))
+         dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_b, kind=hsize_t)
+         CALL h5ltmake_dataset_double_f(group_id, 'scf_eigenvalues_b', 1, dims, &
+                                        qcschema_env%wavefunction%scf_eigenvalues_b, error)
+
+         CPASSERT(ASSOCIATED(qcschema_env%wavefunction%scf_occupations_b))
+         dims(1) = size(qcschema_env%wavefunction%scf_occupations_b, kind=hsize_t)
+         CALL h5ltmake_dataset_double_f(group_id, 'scf_occupations_b', 1, dims, &
+                                        qcschema_env%wavefunction%scf_occupations_b, error)
+
+         ASSOCIATE (fock => qcschema_env%wavefunction%scf_fock_mo_b)
+         dims(1) = size(fock, kind=hsize_t)
+         CALL h5ltmake_dataset_double_f(group_id, 'scf_fock_mo_b', 1, dims, fock, error)
+         END ASSOCIATE
+
+         ASSOCIATE (mos => qcschema_env%wavefunction%scf_orbitals_b)
+         dims(1) = size(mos, kind=hsize_t)
+         CALL h5ltmake_dataset_double_f(group_id, 'scf_orbitals_b', 1, dims, mos, error)
+         END ASSOCIATE
+
+      END IF
+
       ! close wavefunction group
       CALL h5gclose_f(group_id, error)
+
 
       !========================================================================================!
       ! *** QCSchema model ***
@@ -845,225 +857,72 @@ MODULE qcschema
 
 
 ! **************************************************************************************************
-!> \brief Create and initialize a qcschema environment
-!> \param qcschema_env the qcschema environment to populate
-!> \param qs_env the qs environment with all the info of the computation
+!> \brief Copy a (square portion) of a `cp_fm_type` matrix to a standard 1D Fortran array
+!> \param source_matrix the matrix from where the data is taken
+!> \param target_array the array were the data is copied to
+!> \param start_idx the index from which the submatrix starts
+!> \param end_idx the index at which the submatrix ends
 ! **************************************************************************************************
-   SUBROUTINE qcschema_env_create(qcschema_env, qs_env)
-      TYPE(qcschema_type)                                :: qcschema_env
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      TYPE(qs_scf_env_type), POINTER                     :: scf_env
-      TYPE(qs_energy_type), POINTER                      :: energy
-      TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
-      TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(mp2_type), POINTER                            :: mp2_env
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(active_space_type), POINTER                   :: active_space_env
+   SUBROUTINE subspace_symm_matrix_to_array(source_matrix, target_array, start_idx, end_idx)
+      INTEGER, INTENT(IN)                                :: start_idx, end_idx
+      TYPE(cp_fm_type), INTENT(IN)                       :: source_matrix
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: target_array
 
-      INTEGER :: handle, output_unit, nspins, nalpha, nbeta, natom, nbasis, nmo
-      ! INTEGER :: i, m
-      REAL(KIND=dp) :: one_el_en, two_el_en, dispersion
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
+      INTEGER                                            :: i, j, i_sub, j_sub, norb
+      REAL(KIND=dp)                                      :: mval
 
-      CALL timeset(routineN, handle)
+      CPASSERT(end_idx >= start_idx)
+      CPASSERT(start_idx > 0)
 
-      logger => cp_get_default_logger()
-      output_unit = cp_logger_get_default_io_unit(logger)
+      norb = end_idx - start_idx + 1
 
-      ! Collect environment info
-      IF (ASSOCIATED(qs_env)) THEN
-         CALL get_qs_env(qs_env, ks_env=ks_env, energy=energy, &
-                         dft_control=dft_control, force=force, &
-                         mos=mos, particle_set=particle_set, &
-                         scf_env=scf_env, mp2_env=mp2_env, &
-                         active_space=active_space_env)
-      ELSE
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: QS environment is not associated, QCSchema interface quitting'
-         RETURN
-      END IF
+      CPASSERT(SIZE(target_array) == norb*norb)
 
-      ! driver
-      ! TODO: maybe separate this into input component and
-      ! import iot here from there? This would follow the official
-      ! guidelines of QCSchema...
-      IF (ASSOCIATED(force)) THEN
-         qcschema_env%driver = 'gradient'
-      ELSE
-         qcschema_env%driver = 'energy'
-      END IF
-
-      ! success
-      ! TODO: how to check if the calculation was succesful?
-      qcschema_env%success = .true.
-
-      ! return result
-      IF (ALLOCATED(qcschema_env%return_result)) THEN
-         DEALLOCATE (qcschema_env%return_result)
-      END IF
-      IF (qcschema_env%success) THEN
-         IF (qcschema_env%driver == 'energy') THEN
-            ALLOCATE (qcschema_env%return_result(1))
-            qcschema_env%return_result(1) = energy%total
-         ELSE
-            ALLOCATE (qcschema_env%return_result(3*SIZE(particle_set)))
-            ! TODO: populate with forces!!
-            qcschema_env%return_result = 0.0_dp
-         END IF
-      ELSE
-         ! TODO: error handling and abort?
-      END IF
-
-      ! QCSchema provenanve
-      qcschema_env%provenance%creator = 'CP2K'
-      qcschema_env%provenance%version = cp2k_version
-      qcschema_env%provenance%routine = routineN
-
-      ! basis functions info
-      nbasis = mos(1)%mo_set%nao
-      nmo    = mos(1)%mo_set%nmo
-      natom  = SIZE(particle_set)
-      ! restricted or unrestricted calculation?
-      nspins = SIZE(mos)
-      IF (nspins == 1) THEN
-         nalpha = mos(1)%mo_set%nelectron/2
-         nbeta  = nalpha
-      ELSE
-         nalpha = mos(1)%mo_set%nelectron
-         nbeta  = mos(2)%mo_set%nelectron
-      END IF
-
-      ! *** QCSchema properties *** !
-
-      ! general info
-      qcschema_env%properties%calcinfo_nbasis = nbasis
-      qcschema_env%properties%calcinfo_nmo    = nmo
-      qcschema_env%properties%calcinfo_natom  = natom
-      qcschema_env%properties%calcinfo_nalpha = nalpha
-      qcschema_env%properties%calcinfo_nbeta  = nbeta
-      qcschema_env%properties%return_energy   = energy%total
-      ! TODO: no way to get this one?
-      qcschema_env%properties%nuclear_repulsion_energy = 0.0_dp
-
-      ! SCF info
-      qcschema_env%properties%scf_iterations = scf_env%iter_count
-      ! one-electron energy is the sum of all core terms
-      one_el_en = energy%core_overlap + energy%core_self + energy%core
-      qcschema_env%properties%scf_two_electron_energy = one_el_en
-      ! two-electron energy is the sum of hartree and exact exchange (if there)
-      two_el_en = energy%hartree + energy%ex + energy%hartree_1c
-      qcschema_env%properties%scf_one_electron_energy = two_el_en
-      ! xc energy
-      qcschema_env%properties%scf_xc_energy = &
-      energy%exc + energy%exc_aux_fit + energy%exc1 + energy%exc1_aux_fit
-      ! dispersion energy
-      dispersion = energy%dispersion + energy%gcp
-      qcschema_env%properties%scf_dispersion_correction_energy = dispersion
-      ! qcschema_env%properties%scf_vv10_energy
-      ! remove the mp2 part, in case it's non-zero
-      qcschema_env%properties%scf_total_energy = energy%total
-
-      ! was it a DFT calculation?
-      ! IF (ASSOCIATED(qs_env%ks_env)) qcschema_env%properties%dft = .TRUE.
-      ! with dispersion?
-      ! IF (ASSOCIATED(qs_env%dispersion_env)) qcschema_env%properties%dispersion = .TRUE.
-
-      ! Some methods of CP2K are not supported by QCSchema, let's warn the user
-      IF (dft_control%smear) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: smearing not supported in QCSchema'
-      END IF
-      IF (dft_control%dft_plus_u) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: DFT+U not supported in QCSchema'
-      END IF
-      IF (dft_control%do_sccs) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: SCCS not supported in QCSchema'
-      END IF
-      IF (qs_env%qmmm) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: QM/MM not supported in QCSchema'
-      END IF
-      IF (dft_control%qs_control%mulliken_restraint) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: Mulliken restrains not supported in QCSchema'
-      END IF
-      IF (dft_control%qs_control%semi_empirical) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: semi_empirical methods not supported in QCSchema'
-      END IF
-      IF (dft_control%qs_control%dftb) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: DFTB not supported in QCSchema'
-      END IF
-      IF (dft_control%qs_control%xtb) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' WARNING: xTB not supported in QCSchema'
-      END IF
-
-      ! MP2 info
-      IF (ASSOCIATED(qs_env%mp2_env)) THEN
-         qcschema_env%properties%mp2 = .TRUE.
-         ! this info is actually computed, but not stored!
-         ! qcschema_env%properties%mp2_singles_energy       ! don't know what these are
-         ! qcschema_env%properties%mp2_doubles_energy       ! MP2 should be only this?
-         ! qcschema_env%properties%mp2_same_spin_correlation_energy
-         ! qcschema_env%properties%mp2_opposite_spin_correlation_energy
-
-         qcschema_env%properties%mp2_correlation_energy = energy%mp2
-         qcschema_env%properties%mp2_total_energy = energy%total
-
-         ! update the scf energy
-         qcschema_env%properties%scf_total_energy = energy%total - energy%mp2
-      END IF
+      DO j = 1, norb
+         j_sub = start_idx + j - 1
+         DO i = j, norb
+            i_sub = start_idx + i - 1
+            CALL cp_fm_get_element(source_matrix, i_sub, j_sub, mval)
+            target_array(i + (j-1)*norb) = mval
+            target_array(j + (i-1)*norb) = mval
+         END DO
+      END DO
+   END SUBROUTINE subspace_symm_matrix_to_array
 
 
-      ! *** QCSchema wavefunction *** !
-      qcschema_env%wavefunction%scf_eigenvalues_a => mos(1)%mo_set%eigenvalues
-      IF (nspins == 2) THEN
-         qcschema_env%wavefunction%scf_eigenvalues_b => mos(2)%mo_set%eigenvalues
-      END IF
+! **************************************************************************************************
+!> \brief Copy an arbitrary portion of a `cp_fm_type` matrix to a standard 1D Fortran array
+!> \param matrix the matrix from where the data is taken
+!> \param array the array were the data is copied to
+!> \param nrows the number of rows to copy
+!> \param ncols the number of cols to copy
+!> \param first_row the row index from which the submatrix starts
+!> \param first_col the col index at which the submatrix starts
+! **************************************************************************************************
+   SUBROUTINE subspace_full_matrix_to_array(matrix, array, nrows, ncols, first_row, first_col)
+      INTEGER, INTENT(IN)                                :: nrows, ncols, first_row, first_col
+      TYPE(cp_fm_type), INTENT(IN)                       :: matrix
+      REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: array
 
-      ! qcschema_env%wavefunction%scf_fock_mo_a => active_space_env%fock_sub(1)%matrix
-      ! m = (nspins*(nspins + 1))/2
-      ! DO i = 1,m
-      !    active_space_env%eri%eri(i)%csr_mat
-      ! END DO
+      INTEGER                                            :: i, j, i_sub, j_sub
+      REAL(KIND=dp)                                      :: mval
 
+      CPASSERT(nrows > 0)
+      CPASSERT(ncols > 0)
+      CPASSERT(first_row > 0)
+      CPASSERT(first_col > 0)
 
-      CALL timestop(handle)
+      CPASSERT(SIZE(array) == nrows*ncols)
 
-   END SUBROUTINE qcschema_env_create
-
-
-   SUBROUTINE qcschema_env_release(qcschema_env)
-      TYPE(qcschema_type), INTENT(INOUT)      :: qcschema_env
-
-      IF (ALLOCATED(qcschema_env%return_result)) THEN
-         DEALLOCATE (qcschema_env%return_result)
-      END IF
-
-      IF (ALLOCATED(qcschema_env%topology%atomic_numbers)) THEN
-         DEALLOCATE (qcschema_env%topology%atomic_numbers)
-      END IF
-
-      IF (ALLOCATED(qcschema_env%topology%geometry)) THEN
-         DEALLOCATE (qcschema_env%topology%geometry)
-      END IF
-
-      IF (ALLOCATED(qcschema_env%topology%symbols)) THEN
-         DEALLOCATE (qcschema_env%topology%symbols)
-      END IF
-
-      IF (ALLOCATED(qcschema_env%wavefunction%scf_fock_mo_a)) THEN
-         DEALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a)
-      END IF
-
-   END SUBROUTINE qcschema_env_release
+      DO j = 1, ncols
+         j_sub = first_col + j - 1
+         DO i = 1, nrows
+            i_sub = first_row + i - 1
+            CALL cp_fm_get_element(matrix, i_sub, j_sub, mval)
+            array(i + (j-1)*nrows) = mval
+         END DO
+      END DO
+   END SUBROUTINE subspace_full_matrix_to_array
 
 
    SUBROUTINE h5awrite_varlen_string(loc_id, attr_name, attr_data)
@@ -1497,31 +1356,6 @@ MODULE qcschema
       IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
 
    END SUBROUTINE h5awrite_integer_simple
-
-
-   ! SUBROUTINE qcschema_env_release
-   ! END SUBROUTINE qcschema_env_release
-
-! Write to json. write only if quantities exist
-   ! SUBROUTINE qcschema_to_json(qcschema_env)
-   !    ! TYPE(qs_environment_type), POINTER :: qs_env
-   !    TYPE(qcschema_type), POINTER :: qcschema_env
-   !    TYPE(json_core)              :: json
-   !    TYPE(json_value), POINTER    :: root
-   !    INTEGER :: handle
-
-   !    CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_to_json'
-
-   !    CALL timeset(routineN, handle)
-
-   !    CALL json%initialize()
-   !    CALL json%create_object(root,'')
-
-
-
-   !    CALL timestop(handle)
-   ! END SUBROUTINE qcschema_to_json
-
 
 
 END MODULE qcschema
