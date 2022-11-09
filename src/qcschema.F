@@ -569,7 +569,7 @@ MODULE qcschema
       ! get the eri
       ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa(nmo**4))
       CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_aa, &
-                        active_space_env%active_orbitals, 1, 1, output_unit)
+                        active_space_env%active_orbitals, 1)
 
 
       !========================================================================================!
@@ -816,6 +816,11 @@ MODULE qcschema
       CALL h5ltmake_dataset_double_f(group_id, 'scf_orbitals_a', 1, dims, mos, error)
       END ASSOCIATE
 
+      ASSOCIATE (eri => qcschema_env%wavefunction%scf_eri_mo_aa)
+      dims(1) = size(eri, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'scf_eri_mo_aa', 1, dims, eri, error)
+      END ASSOCIATE
+
       IF (.NOT. qcschema_env%wavefunction%restricted) THEN
          CPASSERT(ASSOCIATED(qcschema_env%wavefunction%scf_eigenvalues_b))
          dims(1) = size(qcschema_env%wavefunction%scf_eigenvalues_b, kind=hsize_t)
@@ -942,29 +947,28 @@ MODULE qcschema
 !> \param isp1 the spin of the bra
 !> \param isp2 the spin of the ket
 ! **************************************************************************************************
-   SUBROUTINE eri_to_array(eri_env, array, active_orbitals, isp1, isp2, iw)
+   SUBROUTINE eri_to_array(eri_env, array, active_orbitals, isp1)
       TYPE(eri_type), INTENT(IN)                         :: eri_env
       REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: array
       INTEGER, DIMENSION(:, :), INTENT(IN)               :: active_orbitals
-      INTEGER, INTENT(IN)                                :: isp1, isp2, iw
-
-      ! TYPE(dbcsr_csr_type), POINTER                      :: eri
+      INTEGER, INTENT(IN)                                :: isp1
+      TYPE(dbcsr_csr_type), POINTER                      :: eri
       INTEGER                                            :: i1, i2, i3, i4, &
-                                                            m1, m2, m3, m4, &
+                                                            m1, m2, m3, m4, m1234, &
                                                             i12, i12l, i34, i34l, &
                                                             nmo_active, nmo_total, &
-                                                            nindex, irptr
+                                                            nindex, irptr, nmo_inactive
       INTEGER, DIMENSION(2)                              :: irange
       REAL(KIND=dp)                                      :: erival
 
       nmo_active = SIZE(active_orbitals, 1)
       nmo_total = eri_env%norb
+      nmo_inactive = nmo_total - nmo_active
       nindex = (nmo_total*(nmo_total + 1))/2
-      ASSOCIATE (eri => eri_env%eri(1)%csr_mat)
-      ! irange does not get anything meaningful
-      irange = get_irange_csr(nmo_total, eri%mp_group)
+      eri => eri_env%eri(1)%csr_mat
+      irange = get_irange_csr(nindex, eri%mp_group)
 
-      array(1) = 0
+      array = 0.0_dp
 
       DO m1 = 1, nmo_active
          i1 = active_orbitals(m1, isp1)
@@ -977,14 +981,15 @@ MODULE qcschema
                DO i34l = 1, eri%nzerow_local(i12l)
                   i34 = eri%colind_local(irptr + i34l)
                   CALL csr_idx_from_combined(i34, nmo_total, i3, i4)
+                  m3 = i3 - nmo_inactive
+                  m4 = i4 - nmo_inactive
                   erival = eri%nzval_local%r_dp(irptr + i34l)
-                  WRITE (iw, "(T4,'ERI_QCS|',T20,2I4,' [',I1,']',2I4,' [',I1,']',T58,G20.14)") &
-                     m1, m2, isp1, m3, m4, isp2, erival
+                  m1234 = m1 + (m2 - 1)*nmo_active + (m3 - 1)*nmo_active**2 + (m4 - 1)*nmo_active**3
+                  array(m1234) = erival
                END DO
             END IF
          END DO
       END DO
-      END ASSOCIATE
 
    END SUBROUTINE eri_to_array
 
