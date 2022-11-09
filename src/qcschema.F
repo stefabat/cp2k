@@ -930,12 +930,12 @@ MODULE qcschema
 
       CPASSERT(SIZE(array) == nrows*ncols)
 
-      DO j = 1, ncols
-         j_sub = first_col + j - 1
-         DO i = 1, nrows
-            i_sub = first_row + i - 1
+      DO i = 1, nrows
+         i_sub = first_row + i - 1
+         DO j = 1, ncols
+            j_sub = first_col + j - 1
             CALL cp_fm_get_element(matrix, i_sub, j_sub, mval)
-            array(i + (j-1)*nrows) = mval
+            array(j + (i-1)*ncols) = mval
          END DO
       END DO
    END SUBROUTINE subspace_full_matrix_to_array
@@ -984,7 +984,8 @@ MODULE qcschema
                   m3 = i3 - nmo_inactive
                   m4 = i4 - nmo_inactive
                   erival = eri%nzval_local%r_dp(irptr + i34l)
-                  m1234 = m1 + (m2 - 1)*nmo_active + (m3 - 1)*nmo_active**2 + (m4 - 1)*nmo_active**3
+                  ! m1234 = m1 + (m2 - 1)*nmo_active + (m3 - 1)*nmo_active**2 + (m4 - 1)*nmo_active**3
+                  m1234 = m3 + (m4 - 1)*nmo_active + (m1 - 1)*nmo_active**2 + (m2 - 1)*nmo_active**3
                   array(m1234) = erival
                END DO
             END IF
