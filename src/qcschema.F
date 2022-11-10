@@ -14,6 +14,7 @@
 MODULE qcschema
 
    USE atomic_kind_types,              ONLY: get_atomic_kind
+   USE basis_set_types,                ONLY: gto_basis_set_type
    USE cp2k_info,                      ONLY: cp2k_version
    USE cp_control_types,               ONLY: dft_control_type
    USE cp_fm_types,                    ONLY: cp_fm_type, cp_fm_get_element
@@ -21,6 +22,9 @@ MODULE qcschema
                                              cp_logger_get_default_io_unit, &
                                              cp_logger_type
    USE dbcsr_api,                      ONLY: dbcsr_csr_type
+   USE input_section_types,            ONLY: section_vals_get, &
+                                             section_vals_get_subs_vals, &
+                                             section_vals_type
    USE kinds,                          ONLY: dp, default_string_length, &
                                              default_path_length, int_8, int_4
    USE mp2_types,                      ONLY: mp2_type
@@ -30,6 +34,7 @@ MODULE qcschema
                                              eri_type, get_irange_csr, csr_idx_from_combined
    USE qs_force_types,                 ONLY: qs_force_type
    USE qs_ks_types,                    ONLY: qs_ks_env_type
+   USE qs_kind_types,                  ONLY: qs_kind_type, get_qs_kind
    USE qs_mo_types,                    ONLY: mo_set_p_type, get_mo_set
    USE qs_scf_types,                   ONLY: qs_scf_env_type
    USE qs_energy_types,                ONLY: qs_energy_type
@@ -319,7 +324,8 @@ MODULE qcschema
       REAL(KIND=dp) :: scf_dispersion_correction_energy = 0.0_dp
       REAL(KIND=dp) :: scf_total_energy                 = 0.0_dp
       ! the dipole moment is calculated on the fly and not stored
-      ! REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment  = 0.0_dp
+      REAL(KIND=dp), DIMENSION(3) :: scf_dipole_moment  = 0.0_dp
+      REAL(KIND=dp), DIMENSION(3) :: nuclear_dipole_moment  = 0.0_dp
 
       ! MP2 results
       REAL(KIND=dp) :: mp2_same_spin_correlation_energy     = 0.0_dp
@@ -348,6 +354,7 @@ MODULE qcschema
       TYPE(qcschema_provenance)   :: provenance
       TYPE(qcschema_properties)   :: properties
       TYPE(qcschema_wavefunction) :: wavefunction
+      TYPE(qcschema_basis_set)    :: basis
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE :: return_result
       LOGICAL :: success
       CHARACTER(LEN=default_string_length) :: driver
@@ -366,20 +373,25 @@ MODULE qcschema
       TYPE(qcschema_type), INTENT(INOUT)                 :: qcschema_env
       TYPE(qs_environment_type), INTENT(IN), POINTER     :: qs_env
       TYPE(active_space_type), POINTER                   :: active_space_env
+      TYPE(gto_basis_set_type), POINTER                  :: basis_set
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: kind_set
       TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_force_type), DIMENSION(:), POINTER         :: force
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(mp2_type), POINTER                            :: mp2_env
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(section_vals_type), POINTER                   :: input, hfx_sections
       INTEGER :: handle, output_unit, natoms, nspins, nmo, nao, nel, &
                  nalpha, nbeta, i_glb_start, i_glb_end, &
-                 atomic_number, iatom
-      CHARACTER(Len=2) :: atomic_symbol
-      REAL(KIND=dp) :: dispersion, one_el_en, two_el_en
+                 atomic_number, iatom, ikind
+      CHARACTER(LEN=2) :: atomic_symbol
+      CHARACTER(LEN=default_string_length) :: method, basis_set_name
+      REAL(KIND=dp)    :: dispersion, one_el_en, two_el_en
+      LOGICAL          :: do_hfx
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
       CALL timeset(routineN, handle)
@@ -396,6 +408,7 @@ MODULE qcschema
                          dft_control=dft_control, force=force, &
                          mos=mos, particle_set=particle_set, &
                          scf_env=scf_env, mp2_env=mp2_env, &
+                         input=input, qs_kind_set=kind_set, &
                          active_space=active_space_env)
       ELSE
          CPABORT("QS environment not associated, QCSchema interface quitting")
@@ -573,6 +586,46 @@ MODULE qcschema
 
 
       !========================================================================================!
+      ! *** QCSchema model ***
+      !========================================================================================!
+
+      DO iatom = 1, natoms
+         CALL get_atomic_kind(particle_set(iatom)%atomic_kind, kind_number=ikind)
+         CALL get_qs_kind(kind_set(ikind), basis_set=basis_set)
+
+         basis_set_name = basis_set%name
+
+         ! make sure that we do not run a mixed basis set
+         IF (iatom > 1) THEN
+            CPASSERT(basis_set_name == basis_set%name)
+         END IF
+      END DO
+      qcschema_env%wavefunction%basis_set%name = basis_set_name
+
+      ! figure out which method was used for the calculation
+      IF (dft_control%uks) THEN
+         method = 'U'
+      ELSE IF (dft_control%roks) THEN
+         method = 'RO'
+      ELSE
+         method = 'R'
+      END IF
+
+      hfx_sections => section_vals_get_subs_vals(input, "DFT%XC%HF")
+      CALL section_vals_get(hfx_sections, explicit=do_hfx)
+
+      IF (do_hfx) THEN
+         method = TRIM(method) // 'HF'
+      ELSE IF (qcschema_env%properties%mp2) THEN
+         method = TRIM(method) // 'MP2'
+      ELSE
+         method = TRIM(method) // 'KS'
+      END IF
+
+      qcschema_env%wavefunction%method = TRIM(method)
+
+
+      !========================================================================================!
       ! *** QCSchema root ***
       !========================================================================================!
 
@@ -723,17 +776,14 @@ MODULE qcschema
       ! create the molecule group
       CALL h5gcreate_f(file_id, 'molecule', group_id, error)
       ! populate molecule
-      ! dims(1) = size(qcschema_env%topology%geometry, kind=hsize_t)
       CALL h5awrite_double_simple(group_id, 'geometry', qcschema_env%topology%geometry)
-      ! CALL h5ltmake_dataset_double_f(group_id, 'geometry', 1, dims, &
-      !                                qcschema_env%topology%geometry, error)
-      ! dims(1) = size(qcschema_env%topology%atomic_numbers, kind=hsize_t)
       CALL h5awrite_integer_simple(group_id, 'atomic_numbers', qcschema_env%topology%atomic_numbers)
-      ! CALL h5ltmake_dataset_int_f(group_id, 'atomic_numbers', 1, dims, &
-                                 !  qcschema_env%topology%atomic_numbers, error)
       CALL h5awrite_integer_scalar(group_id, 'molecular_charge', qcschema_env%topology%molecular_charge)
       CALL h5awrite_integer_scalar(group_id, 'molecular_multiplicity', qcschema_env%topology%molecular_multiplicity)
       CALL h5awrite_string_simple(group_id, 'symbols', qcschema_env%topology%symbols)
+
+      CALL h5awrite_fixlen_string(group_id, 'schema_name', 'qcschema_molecule')
+      CALL h5awrite_integer_scalar(group_id, 'schema_version', 2)
       ! close molecule group
       CALL h5gclose_f(group_id, error)
 
@@ -750,14 +800,22 @@ MODULE qcschema
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nalpha', qcschema_env%properties%calcinfo_nalpha)
       CALL h5awrite_integer_scalar(group_id, 'calcinfo_nbeta',  qcschema_env%properties%calcinfo_nbeta )
 
+      dims(1) = size(qcschema_env%properties%scf_dipole_moment, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'scf_dipole_moment', 1, dims, &
+                                     qcschema_env%properties%scf_dipole_moment, error)
+
+      dims(1) = size(qcschema_env%properties%nuclear_dipole_moment, kind=hsize_t)
+      CALL h5ltmake_dataset_double_f(group_id, 'nuclear_dipole_moment', 1, dims, &
+                                     qcschema_env%properties%nuclear_dipole_moment, error)
+
       ! energies, scf, mp2, ...
       CALL h5awrite_double_scalar(group_id, 'return_energy', qcschema_env%properties%return_energy)
       CALL h5awrite_double_scalar(group_id, 'scf_total_energy', qcschema_env%properties%scf_total_energy)
 
-      IF (qcschema_env%properties%nuclear_repulsion_energy /= 0.0_dp) THEN
+      ! IF (qcschema_env%properties%nuclear_repulsion_energy /= 0.0_dp) THEN
          CALL h5awrite_double_scalar(group_id, 'nuclear_repulsion_energy', &
                                      qcschema_env%properties%nuclear_repulsion_energy)
-      END IF
+      ! END IF
 
       IF (qcschema_env%properties%scf_iterations /= 0) THEN
          CALL h5awrite_integer_scalar(group_id, 'scf_iterations', qcschema_env%properties%scf_iterations)
@@ -844,6 +902,8 @@ MODULE qcschema
 
       END IF
 
+      CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%basis_set%name))
+
       ! close wavefunction group
       CALL h5gclose_f(group_id, error)
 
@@ -853,8 +913,8 @@ MODULE qcschema
       !========================================================================================!
       ! create the model group
       CALL h5gcreate_f(file_id, 'model', group_id, error)
-      ! CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%basis_set%name))
-      ! CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%method))
+      CALL h5awrite_fixlen_string(group_id, 'basis', TRIM(qcschema_env%wavefunction%basis_set%name))
+      CALL h5awrite_fixlen_string(group_id, 'method', TRIM(qcschema_env%wavefunction%method))
       ! close model group
       CALL h5gclose_f(group_id, error)
 
@@ -954,7 +1014,9 @@ MODULE qcschema
       INTEGER, INTENT(IN)                                :: isp1
       TYPE(dbcsr_csr_type), POINTER                      :: eri
       INTEGER                                            :: i1, i2, i3, i4, &
-                                                            m1, m2, m3, m4, m1234, &
+                                                            i, j, k, l, &
+                                                            ijkl, jikl, ijlk, jilk, &
+                                                            klij, lkij, klji, lkji, &
                                                             i12, i12l, i34, i34l, &
                                                             nmo_active, nmo_total, &
                                                             nindex, irptr, nmo_inactive
@@ -970,10 +1032,10 @@ MODULE qcschema
 
       array = 0.0_dp
 
-      DO m1 = 1, nmo_active
-         i1 = active_orbitals(m1, isp1)
-         DO m2 = m1, nmo_active
-            i2 = active_orbitals(m2, isp1)
+      DO i = 1, nmo_active
+         i1 = active_orbitals(i, isp1)
+         DO j = i, nmo_active
+            i2 = active_orbitals(j, isp1)
             i12 = csr_idx_to_combined(i1, i2, nmo_total)
             IF (i12 >= irange(1) .AND. i12 <= irange(2)) THEN
                i12l = i12 - irange(1) + 1
@@ -981,12 +1043,27 @@ MODULE qcschema
                DO i34l = 1, eri%nzerow_local(i12l)
                   i34 = eri%colind_local(irptr + i34l)
                   CALL csr_idx_from_combined(i34, nmo_total, i3, i4)
-                  m3 = i3 - nmo_inactive
-                  m4 = i4 - nmo_inactive
+                  k = i3 - nmo_inactive
+                  l = i4 - nmo_inactive
                   erival = eri%nzval_local%r_dp(irptr + i34l)
-                  ! m1234 = m1 + (m2 - 1)*nmo_active + (m3 - 1)*nmo_active**2 + (m4 - 1)*nmo_active**3
-                  m1234 = m3 + (m4 - 1)*nmo_active + (m1 - 1)*nmo_active**2 + (m2 - 1)*nmo_active**3
-                  array(m1234) = erival
+
+                  ! 8-fold permutational symmetry
+                  ijkl = i + (j - 1)*nmo_active + (k - 1)*nmo_active**2 + (l - 1)*nmo_active**3
+                  jikl = j + (i - 1)*nmo_active + (k - 1)*nmo_active**2 + (l - 1)*nmo_active**3
+                  ijlk = i + (j - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
+                  jilk = j + (i - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
+                  klij = k + (l - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
+                  lkij = l + (k - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
+                  klji = k + (l - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
+                  lkji = l + (k - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
+                  array(ijkl) = erival
+                  array(jikl) = erival
+                  array(ijlk) = erival
+                  array(jilk) = erival
+                  array(klij) = erival
+                  array(lkij) = erival
+                  array(klji) = erival
+                  array(lkji) = erival
                END DO
             END IF
          END DO
