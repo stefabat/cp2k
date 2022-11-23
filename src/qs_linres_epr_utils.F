@@ -43,7 +43,7 @@ MODULE qs_linres_epr_utils
                                               REALDATA3D,&
                                               REALSPACE,&
                                               RECIPROCALSPACE,&
-                                              pw_p_type
+                                              pw_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
    USE qs_kind_types,                   ONLY: qs_kind_type
@@ -55,7 +55,7 @@ MODULE qs_linres_epr_utils
                                               nablavks_atom_type,&
                                               set_epr_env
    USE qs_matrix_pools,                 ONLY: qs_matrix_pools_type
-   USE qs_mo_types,                     ONLY: mo_set_p_type
+   USE qs_mo_types,                     ONLY: mo_set_type
    USE qs_rho_atom_types,               ONLY: deallocate_rho_atom_set
    USE qs_rho_types,                    ONLY: qs_rho_clear,&
                                               qs_rho_create,&
@@ -96,12 +96,12 @@ CONTAINS
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(nablavks_atom_type), DIMENSION(:), POINTER    :: nablavks_atom_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: rho_g, rho_r
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
+      TYPE(pw_type), DIMENSION(:), POINTER               :: rho_g, rho_r
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_matrix_pools_type), POINTER                :: mpools
       TYPE(scf_control_type), POINTER                    :: scf_control
@@ -187,12 +187,12 @@ CONTAINS
       DO i_B = 1, 3
          DO idir = 1, 3
             NULLIFY (epr_env%bind_set(idir, i_B)%rho, rho_r, rho_g)
+            ALLOCATE (epr_env%bind_set(idir, i_B)%rho)
             CALL qs_rho_create(epr_env%bind_set(idir, i_B)%rho)
             ALLOCATE (rho_r(1), rho_g(1))
-            ALLOCATE (rho_r(1)%pw, rho_g(1)%pw)
-            CALL pw_pool_create_pw(auxbas_pw_pool, rho_r(1)%pw, &
+            CALL pw_pool_create_pw(auxbas_pw_pool, rho_r(1), &
                                    use_data=REALDATA3D, in_space=REALSPACE)
-            CALL pw_pool_create_pw(auxbas_pw_pool, rho_g(1)%pw, &
+            CALL pw_pool_create_pw(auxbas_pw_pool, rho_g(1), &
                                    use_data=COMPLEXDATA1D, in_space=RECIPROCALSPACE)
             CALL qs_rho_set(epr_env%bind_set(idir, i_B)%rho, rho_r=rho_r, rho_g=rho_g)
          END DO
@@ -203,12 +203,12 @@ CONTAINS
       DO idir = 1, 3
          DO ispin = 1, nspins
             NULLIFY (epr_env%nablavks_set(idir, ispin)%rho, rho_r, rho_g)
+            ALLOCATE (epr_env%nablavks_set(idir, ispin)%rho)
             CALL qs_rho_create(epr_env%nablavks_set(idir, ispin)%rho)
             ALLOCATE (rho_r(1), rho_g(1))
-            ALLOCATE (rho_r(1)%pw, rho_g(1)%pw)
-            CALL pw_pool_create_pw(auxbas_pw_pool, rho_r(1)%pw, &
+            CALL pw_pool_create_pw(auxbas_pw_pool, rho_r(1), &
                                    use_data=REALDATA3D, in_space=REALSPACE)
-            CALL pw_pool_create_pw(auxbas_pw_pool, rho_g(1)%pw, &
+            CALL pw_pool_create_pw(auxbas_pw_pool, rho_g(1), &
                                    use_data=COMPLEXDATA1D, in_space=RECIPROCALSPACE)
             CALL qs_rho_set(epr_env%nablavks_set(idir, ispin)%rho, &
                             rho_r=rho_r, rho_g=rho_g)

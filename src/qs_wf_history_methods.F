@@ -68,7 +68,7 @@ MODULE qs_wf_history_methods
                                               REALDATA3D,&
                                               REALSPACE,&
                                               RECIPROCALSPACE,&
-                                              pw_p_type
+                                              pw_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type,&
@@ -81,7 +81,7 @@ MODULE qs_wf_history_methods
                                               make_basis_simple,&
                                               make_basis_sm
    USE qs_mo_types,                     ONLY: get_mo_set,&
-                                              mo_set_p_type
+                                              mo_set_type
    USE qs_rho_methods,                  ONLY: qs_rho_update_rho
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_set,&
@@ -149,10 +149,10 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, rho_ao
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao_kp
       TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(pw_env_type), POINTER                         :: pw_env
-      TYPE(pw_p_type), DIMENSION(:), POINTER             :: rho_g, rho_r
       TYPE(pw_pool_type), POINTER                        :: auxbas_pw_pool
+      TYPE(pw_type), DIMENSION(:), POINTER               :: rho_g, rho_r
       TYPE(qs_rho_type), POINTER                         :: rho
 
       CALL timeset(routineN, handle)
@@ -183,10 +183,10 @@ CONTAINS
             CPASSERT(nspins == SIZE(snapshot%wf))
          END IF
          DO ispin = 1, nspins
-            CALL get_mo_set(mos(ispin)%mo_set, mo_coeff=mo_coeff)
+            CALL get_mo_set(mos(ispin), mo_coeff=mo_coeff)
             CALL cp_fm_to_fm(mo_coeff, snapshot%wf(ispin)%matrix)
          END DO
-      ELSE IF (ASSOCIATED(snapshot%wf)) THEN
+      ELSE
          CALL fm_pools_give_back_fm_vect(ao_mo_pools, snapshot%wf)
       END IF
 
@@ -196,18 +196,16 @@ CONTAINS
          IF (.NOT. ASSOCIATED(snapshot%rho_r)) THEN
             ALLOCATE (snapshot%rho_r(nspins))
             DO ispin = 1, nspins
-               ALLOCATE (snapshot%rho_r(ispin)%pw)
-               CALL pw_pool_create_pw(auxbas_pw_pool, snapshot%rho_r(ispin)%pw, &
+               CALL pw_pool_create_pw(auxbas_pw_pool, snapshot%rho_r(ispin), &
                                       in_space=REALSPACE, use_data=REALDATA3D)
             END DO
          END IF
          DO ispin = 1, nspins
-            CALL pw_copy(rho_r(ispin)%pw, snapshot%rho_r(ispin)%pw)
+            CALL pw_copy(rho_r(ispin), snapshot%rho_r(ispin))
          END DO
       ELSE IF (ASSOCIATED(snapshot%rho_r)) THEN
          DO ispin = 1, SIZE(snapshot%rho_r)
-            CALL pw_pool_give_back_pw(auxbas_pw_pool, snapshot%rho_r(ispin)%pw)
-            DEALLOCATE (snapshot%rho_r(ispin)%pw)
+            CALL pw_pool_give_back_pw(auxbas_pw_pool, snapshot%rho_r(ispin))
          END DO
          DEALLOCATE (snapshot%rho_r)
       END IF
@@ -218,18 +216,16 @@ CONTAINS
          IF (.NOT. ASSOCIATED(snapshot%rho_g)) THEN
             ALLOCATE (snapshot%rho_g(nspins))
             DO ispin = 1, nspins
-               ALLOCATE (snapshot%rho_g(ispin)%pw)
-               CALL pw_pool_create_pw(auxbas_pw_pool, snapshot%rho_g(ispin)%pw, &
+               CALL pw_pool_create_pw(auxbas_pw_pool, snapshot%rho_g(ispin), &
                                       in_space=RECIPROCALSPACE, use_data=COMPLEXDATA1D)
             END DO
          END IF
          DO ispin = 1, nspins
-            CALL pw_copy(rho_g(ispin)%pw, snapshot%rho_g(ispin)%pw)
+            CALL pw_copy(rho_g(ispin), snapshot%rho_g(ispin))
          END DO
       ELSE IF (ASSOCIATED(snapshot%rho_g)) THEN
          DO ispin = 1, SIZE(snapshot%rho_g)
-            CALL pw_pool_give_back_pw(auxbas_pw_pool, snapshot%rho_g(ispin)%pw)
-            DEALLOCATE (snapshot%rho_g(ispin)%pw)
+            CALL pw_pool_give_back_pw(auxbas_pw_pool, snapshot%rho_g(ispin))
          END DO
          DEALLOCATE (snapshot%rho_g)
       END IF
@@ -483,7 +479,7 @@ CONTAINS
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao, rho_frozen_ao
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: rho_ao_kp
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(qs_wf_snapshot_type), POINTER                 :: t0_state, t1_state
 
@@ -593,12 +589,12 @@ CONTAINS
          CALL wfi_set_history_variables(qs_env=qs_env, nvec=nvec)
          CALL qs_rho_get(rho, rho_ao=rho_ao)
          DO ispin = 1, SIZE(mos)
-            CALL get_mo_set(mos(ispin)%mo_set, mo_coeff=mo_coeff, &
+            CALL get_mo_set(mos(ispin), mo_coeff=mo_coeff, &
                             nmo=nmo)
             CALL reorthogonalize_vectors(qs_env, &
                                          v_matrix=mo_coeff, &
                                          n_col=nmo)
-            CALL calculate_density_matrix(mo_set=mos(ispin)%mo_set, &
+            CALL calculate_density_matrix(mo_set=mos(ispin), &
                                           density_matrix=rho_ao(ispin)%matrix)
          END DO
          CALL qs_rho_update_rho(rho, qs_env=qs_env)
@@ -661,7 +657,7 @@ CONTAINS
          t2 = t1 + dt
          CALL qs_rho_get(rho, rho_ao=rho_ao)
          DO ispin = 1, SIZE(mos)
-            CALL get_mo_set(mos(ispin)%mo_set, mo_coeff=mo_coeff, &
+            CALL get_mo_set(mos(ispin), mo_coeff=mo_coeff, &
                             nmo=nmo)
             CALL cp_fm_scale_and_add(alpha=0.0_dp, &
                                      matrix_a=mo_coeff, &
@@ -674,7 +670,7 @@ CONTAINS
             CALL reorthogonalize_vectors(qs_env, &
                                          v_matrix=mo_coeff, &
                                          n_col=nmo)
-            CALL calculate_density_matrix(mo_set=mos(ispin)%mo_set, &
+            CALL calculate_density_matrix(mo_set=mos(ispin), &
                                           density_matrix=rho_ao(ispin)%matrix)
          END DO
          CALL qs_rho_update_rho(rho, qs_env=qs_env)
@@ -759,7 +755,7 @@ CONTAINS
          CALL qs_rho_get(rho, rho_ao=rho_ao)
          DO ispin = 1, SIZE(mos)
             NULLIFY (mo_coeff, matrix_struct, matrix_struct_new)
-            CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff=mo_coeff)
+            CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
             CALL cp_fm_get_info(mo_coeff, nrow_global=n, ncol_global=k, &
                                 matrix_struct=matrix_struct)
             CALL cp_fm_struct_create(matrix_struct_new, template_fmstruct=matrix_struct, &
@@ -780,7 +776,7 @@ CONTAINS
             CALL reorthogonalize_vectors(qs_env, &
                                          v_matrix=mo_coeff, &
                                          n_col=k)
-            CALL calculate_density_matrix(mo_set=mos(ispin)%mo_set, &
+            CALL calculate_density_matrix(mo_set=mos(ispin), &
                                           density_matrix=rho_ao(ispin)%matrix)
          END DO
          CALL qs_rho_update_rho(rho, qs_env=qs_env)
@@ -807,7 +803,7 @@ CONTAINS
          my_orthogonal_wf = .TRUE.
          DO ispin = 1, SIZE(mos)
             NULLIFY (mo_coeff, matrix_struct, matrix_struct_new)
-            CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff=mo_coeff)
+            CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
             CALL cp_fm_get_info(mo_coeff, nrow_global=n, ncol_global=k, &
                                 matrix_struct=matrix_struct)
             CALL cp_fm_create(fm_tmp, matrix_struct)
@@ -840,7 +836,7 @@ CONTAINS
             CALL reorthogonalize_vectors(qs_env, &
                                          v_matrix=mo_coeff, &
                                          n_col=k)
-            CALL calculate_density_matrix(mo_set=mos(ispin)%mo_set, &
+            CALL calculate_density_matrix(mo_set=mos(ispin), &
                                           density_matrix=rho_ao(ispin)%matrix)
          END DO
          CALL qs_rho_update_rho(rho, qs_env=qs_env)
@@ -871,7 +867,7 @@ CONTAINS
          CALL qs_rho_get(rho, rho_ao=rho_ao)
          DO ispin = 1, SIZE(mos)
             NULLIFY (mo_coeff, matrix_struct, matrix_struct_new)
-            CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff=mo_coeff)
+            CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
             CALL cp_fm_get_info(mo_coeff, &
                                 nrow_global=n, &
                                 ncol_global=k, &
@@ -919,7 +915,7 @@ CONTAINS
             CALL reorthogonalize_vectors(qs_env, &
                                          v_matrix=mo_coeff, &
                                          n_col=k)
-            CALL calculate_density_matrix(mo_set=mos(ispin)%mo_set, &
+            CALL calculate_density_matrix(mo_set=mos(ispin), &
                                           density_matrix=rho_ao(ispin)%matrix)
          END DO
          CALL qs_rho_update_rho(rho, qs_env=qs_env)

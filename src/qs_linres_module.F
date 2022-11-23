@@ -89,10 +89,9 @@ MODULE qs_linres_module
                                               epr_env_type,&
                                               issc_env_type,&
                                               linres_control_create,&
-                                              linres_control_release,&
                                               linres_control_type,&
                                               nmr_env_type
-   USE qs_mo_types,                     ONLY: mo_set_p_type
+   USE qs_mo_types,                     ONLY: mo_set_type
    USE qs_p_env_methods,                ONLY: p_env_create,&
                                               p_env_psi0_changed
    USE qs_p_env_types,                  ONLY: p_env_release,&
@@ -327,7 +326,7 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, rho_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(section_vals_type), POINTER                   :: loc_section
 
@@ -337,10 +336,10 @@ CONTAINS
                                     extension=".linresLog")
       NULLIFY (dft_control, linres_control, loc_section, rho, mos, matrix_ks, rho_ao)
 
+      ALLOCATE (linres_control)
       CALL linres_control_create(linres_control)
       CALL set_qs_env(qs_env=qs_env, linres_control=linres_control)
-      CALL linres_control_release(linres_control)
-      CALL get_qs_env(qs_env=qs_env, linres_control=linres_control, &
+      CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, matrix_ks=matrix_ks, mos=mos, rho=rho)
       CALL qs_rho_get(rho, rho_ao=rho_ao)
 
@@ -358,7 +357,7 @@ CONTAINS
          CALL linres_localize(qs_env, linres_control, dft_control%nspins)
 
          DO ispin = 1, dft_control%nspins
-            CALL calculate_density_matrix(mos(ispin)%mo_set, rho_ao(ispin)%matrix)
+            CALL calculate_density_matrix(mos(ispin), rho_ao(ispin)%matrix)
          END DO
          ! ** update qs_env%rho
          CALL qs_rho_update_rho(rho, qs_env=qs_env)
