@@ -124,7 +124,7 @@ MODULE qcschema
       ! The (user-given) name of the molecule
       CHARACTER(LEN=default_string_length)         :: name
       ! The masses (in au) of all atoms. Canonical weights are assumed if this is not given explicitly
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: masses => Null()
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: masses
       ! Any additional (user-provided) comment
       CHARACTER(LEN=default_string_length)         :: comment
       ! An instance of :class:`QCProvenance`
@@ -229,55 +229,22 @@ MODULE qcschema
       ! The basis set used during the computation
       TYPE(qcschema_basis_set)                     :: basis_set
 
-      ! These are supposedly the "names" of the quantities even
-      ! though I don't understand why do we need them
-      CHARACTER(LEN=default_string_length)         :: orbitals_a
-      CHARACTER(LEN=default_string_length)         :: orbitals_b
-      CHARACTER(LEN=default_string_length)         :: density_a
-      CHARACTER(LEN=default_string_length)         :: density_b
-      CHARACTER(LEN=default_string_length)         :: density_mo_a
-      CHARACTER(LEN=default_string_length)         :: density_mo_b
-      CHARACTER(LEN=default_string_length)         :: fock_a
-      CHARACTER(LEN=default_string_length)         :: fock_b
-      CHARACTER(LEN=default_string_length)         :: fock_mo_a
-      CHARACTER(LEN=default_string_length)         :: fock_mo_b
-      CHARACTER(LEN=default_string_length)         :: eigenvalues_a
-      CHARACTER(LEN=default_string_length)         :: eigenvalues_b
-      CHARACTER(LEN=default_string_length)         :: occupations_a
-      CHARACTER(LEN=default_string_length)         :: occupations_b
-      CHARACTER(LEN=default_string_length)         :: eri
-      CHARACTER(LEN=default_string_length)         :: eri_mo_aa
-      CHARACTER(LEN=default_string_length)         :: eri_mo_ab
-      CHARACTER(LEN=default_string_length)         :: eri_mo_ba
-      CHARACTER(LEN=default_string_length)         :: eri_mo_bb
-
       ! SCF quantities in AO or MO basis
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_a
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_orbitals_b
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_a     => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_b     => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_mo_a  => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_density_mo_b  => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_a        => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_fock_b        => Null()
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_mo_a
+      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_density_mo_b
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_mo_a
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_fock_mo_b
-      ! TYPE(cp_fm_type), POINTER                    :: scf_fock_mo_a     => Null()
-      ! TYPE(cp_fm_type), POINTER                    :: scf_fock_mo_b     => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_coulomb_a     => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_coulomb_b     => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_exchange_a    => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_exchange_b    => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eigenvalues_a => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_eigenvalues_b => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_occupations_a => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: scf_occupations_b => Null()
 
-      ! ERI should be arrays of doubles, but in Qiskit are simple strings?
+      ! Electron repulsion integrals
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_aa
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ab
-      REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_ba
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE     :: scf_eri_mo_bb
 
       ! Quantities with localized orbitals. All `nmo` orbitals are included,
@@ -286,12 +253,6 @@ MODULE qcschema
       REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_orbitals_b => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_fock_a     => Null()
       REAL(KIND=dp), DIMENSION(:), POINTER         :: localized_fock_b     => Null()
-
-      ! Nne-electron Hamiltonians in AO basis
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_core_a      => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_core_b      => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_effective_a => Null()
-      REAL(KIND=dp), DIMENSION(:), POINTER         :: h_effective_b => Null()
 
       ! Whether the computation used restricted spin orbitals
       LOGICAL :: restricted
@@ -335,8 +296,6 @@ MODULE qcschema
       ! these are the only two that are saved
       REAL(KIND=dp) :: mp2_correlation_energy = 0.0_dp
       REAL(KIND=dp) :: mp2_total_energy       = 0.0_dp
-      ! the dipole moment is calculated on the fly and not stored
-      ! REAL(KIND=dp), DIMENSION(3) :: mp2_dipole_moment = 0.0_dp
 
       ! internal flags to know the type of calculation
       LOGICAL :: mp2 = .FALSE.
@@ -356,8 +315,8 @@ MODULE qcschema
       TYPE(qcschema_wavefunction) :: wavefunction
       TYPE(qcschema_basis_set)    :: basis
       REAL(KIND=dp), DIMENSION(:), ALLOCATABLE :: return_result
-      LOGICAL :: success
       CHARACTER(LEN=default_string_length) :: driver
+      LOGICAL :: success
    END TYPE qcschema_type
 
 
@@ -390,7 +349,7 @@ MODULE qcschema
                  atomic_number, iatom, ikind
       CHARACTER(LEN=2) :: atomic_symbol
       CHARACTER(LEN=default_string_length) :: method, basis_set_name
-      REAL(KIND=dp)    :: dispersion, one_el_en, two_el_en
+      REAL(KIND=dp)    :: dispersion, one_el_en, two_el_en, mass
       LOGICAL          :: do_hfx
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qcschema_env_initialize'
 
@@ -440,6 +399,7 @@ MODULE qcschema
       ALLOCATE (qcschema_env%topology%geometry(3*natoms))
       ALLOCATE (qcschema_env%topology%symbols(natoms))
       ALLOCATE (qcschema_env%topology%atomic_numbers(natoms))
+      ALLOCATE (qcschema_env%topology%masses(natoms))
 
       DO iatom = 1, natoms
          ! set the geometry as a flat array
@@ -449,9 +409,10 @@ MODULE qcschema
          CALL get_atomic_kind(particle_set(iatom)%atomic_kind, element_symbol=atomic_symbol)
          qcschema_env%topology%symbols(iatom) = atomic_symbol
 
-         ! set the atomic numbers
-         CALL get_ptable_info(atomic_symbol, number=atomic_number)
+         ! set the atomic numbers and masses
+         CALL get_ptable_info(atomic_symbol, number=atomic_number, amass=mass)
          qcschema_env%topology%atomic_numbers(iatom) = atomic_number
+         qcschema_env%topology%masses(iatom) = mass
       END DO
 
       qcschema_env%topology%molecular_charge = dft_control%charge
@@ -655,8 +616,6 @@ MODULE qcschema
       END IF
 
 
-
-
       CALL timestop(handle)
 
    END SUBROUTINE qcschema_env_create
@@ -675,6 +634,10 @@ MODULE qcschema
 
       IF (ALLOCATED(qcschema_env%topology%atomic_numbers)) THEN
          DEALLOCATE (qcschema_env%topology%atomic_numbers)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%topology%masses)) THEN
+         DEALLOCATE (qcschema_env%topology%masses)
       END IF
 
       IF (ALLOCATED(qcschema_env%topology%geometry)) THEN
@@ -703,6 +666,14 @@ MODULE qcschema
 
       IF (ALLOCATED(qcschema_env%wavefunction%scf_eri_mo_aa)) THEN
          DEALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_eri_mo_bb)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_eri_mo_bb)
+      END IF
+
+      IF (ALLOCATED(qcschema_env%wavefunction%scf_eri_mo_ab)) THEN
+         DEALLOCATE (qcschema_env%wavefunction%scf_eri_mo_ab)
       END IF
 
    END SUBROUTINE qcschema_env_release
@@ -778,6 +749,7 @@ MODULE qcschema
       ! populate molecule
       CALL h5awrite_double_simple(group_id, 'geometry', qcschema_env%topology%geometry)
       CALL h5awrite_integer_simple(group_id, 'atomic_numbers', qcschema_env%topology%atomic_numbers)
+      CALL h5awrite_double_simple(group_id, 'masses', qcschema_env%topology%masses)
       CALL h5awrite_integer_scalar(group_id, 'molecular_charge', qcschema_env%topology%molecular_charge)
       CALL h5awrite_integer_scalar(group_id, 'molecular_multiplicity', qcschema_env%topology%molecular_multiplicity)
       CALL h5awrite_string_simple(group_id, 'symbols', qcschema_env%topology%symbols)
