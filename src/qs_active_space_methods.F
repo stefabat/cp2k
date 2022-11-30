@@ -137,6 +137,10 @@ MODULE qs_active_space_methods
    USE task_list_types,                 ONLY: allocate_task_list,&
                                               deallocate_task_list,&
                                               task_list_type
+   USE qcschema,                        ONLY: qcschema_type, qcschema_env_create, &
+                                              qcschema_env_release, qcschema_to_hdf5, &
+                                              read_pmat_from_hdf5
+
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -586,7 +590,11 @@ CONTAINS
                   m = active_space_env%inactive_orbitals(i, ispin)
                   CALL cp_fm_to_fm(fm_ref, fm_target, 1, m, m)
                   mo_set%eigenvalues(m) = eigenvalues(m, ispin)
-                  mo_set%occupation_numbers(m) = 1.0
+                  IF (nspins > 1) THEN
+                     mo_set%occupation_numbers(m) = 1.0
+                  ELSE
+                     mo_set%occupation_numbers(m) = 2.0
+                  END IF
                END DO
                ! copy active orbitals
                mo_set => active_space_env%mos_active(ispin)
@@ -594,14 +602,18 @@ CONTAINS
                ncol = nactive_orb(ispin)
                DO i = 1, SIZE(active_space_env%active_orbitals, 1)
                   m = active_space_env%active_orbitals(i, ispin)
-                  IF (i > nmo) THEN
+                  IF (m > nmo) THEN
                      CALL cp_fm_to_fm(mo_virt, fm_target, 1, m - nmo, m)
                      mo_set%eigenvalues(m) = evals_virt(m - nmo)
                      mo_set%occupation_numbers(m) = 0.0
                   ELSE
                      CALL cp_fm_to_fm(fm_ref, fm_target, 1, m, m)
                      mo_set%eigenvalues(m) = eigenvalues(m, ispin)
-                     mo_set%occupation_numbers(m) = 1.0
+                     IF (nspins > 1) THEN
+                        mo_set%occupation_numbers(m) = 1.0
+                     ELSE
+                        mo_set%occupation_numbers(m) = 2.0
+                     END IF
                   END IF
                END DO
                ! Release
@@ -775,7 +787,11 @@ CONTAINS
                         ELSE
                            CALL cp_fm_to_fm(fm_dummy, fm_target_active, 1, i, m)
                            mo_set_active%eigenvalues(m) = eigenvalues(i, ispin)
-                           mo_set_active%occupation_numbers(m) = 1.0
+                           IF (nspins > 1) THEN
+                              mo_set_active%occupation_numbers(m) = 1.0
+                           ELSE
+                              mo_set_active%occupation_numbers(m) = 2.0
+                           END IF
                         END IF
                         active_space_env%active_orbitals(j, ispin) = i
                         EXIT
@@ -786,7 +802,11 @@ CONTAINS
                      CALL cp_fm_to_fm(fm_dummy, fm_target_inactive, 1, i, l)
                      IF (nel > 0) THEN
                         active_space_env%inactive_orbitals(l, ispin) = i
-                        mo_set_inactive%occupation_numbers(m) = 1.0
+                        IF (nspins > 1) THEN
+                           mo_set_inactive%occupation_numbers(m) = 1.0
+                        ELSE
+                           mo_set_inactive%occupation_numbers(m) = 2.0
+                        END IF
                      END IF
                      mo_set_inactive%eigenvalues(m) = eigenvalues(m, ispin)
                      l = l + 1
@@ -1114,7 +1134,7 @@ CONTAINS
       ! Output a FCIDUMP file
       ! CALL fcidump(active_space_env, as_input)
 
-      CALL set_qs_env(qs_env, active_space=active_space_env)
+      ! CALL set_qs_env(qs_env, active_space=active_space_env)
 
       IF (iw > 0) THEN
          WRITE (iw, '(/,T2,A)') &
@@ -2445,7 +2465,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'update_active_space'
 
-      INTEGER                                            :: handle, ispin, nao, nmo, nspins
+      INTEGER                                            :: handle, ispin, nao, nmo, nspins!, i, j
       LOGICAL                                            :: should_stop
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: p_ref
       TYPE(cp_fm_type)                                   :: lamat, vec
@@ -2456,6 +2476,9 @@ CONTAINS
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(qcschema_type)                                :: qcschema_env
+      ! TYPE(cp_logger_type), POINTER                      :: logger
+      ! CHARACTER(LEN=default_path_length)                 :: filename
 
       CALL timeset(routineN, handle)
 
@@ -2507,12 +2530,19 @@ CONTAINS
          ! inactive subspace energy and active Fock operator
          CALL subspace_fock_matrix(active_space_env)
          CALL fcidump(active_space_env, as_input)
+
+         CALL set_qs_env(qs_env, active_space=active_space_env)
+         ! create and populate qcschema instance
+         CALL qcschema_env_create(qcschema_env, qs_env)
+         ! dump qcschema to file
+         CALL qcschema_to_hdf5(qcschema_env)
+
          CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
 
          DO WHILE (.NOT. should_stop)
 
             CALL get_qs_env(qs_env, para_env=para_env)
-            CALL read_active_density(active_space_env, para_env)
+            CALL read_active_density(active_space_env, para_env, qcschema_env)
 
             ! Debug: remove or refactor
             nspins = active_space_env%nspins
@@ -2560,7 +2590,22 @@ CONTAINS
          ! inactive subspace energy and active Fock operator
          CALL subspace_fock_matrix(active_space_env)
          CALL fcidump(active_space_env, as_input)
+
+         CALL set_qs_env(qs_env, active_space=active_space_env)
+         ! create and populate qcschema instance
+         CALL qcschema_env_create(qcschema_env, qs_env)
+         ! dump qcschema to file
+         CALL qcschema_to_hdf5(qcschema_env)
       END IF
+
+      ! nmo = qcschema_env%properties%calcinfo_nmo
+      ! WRITE(6,*) 'scf_density_mo_a read from hdf5 file:'
+      ! DO i = 1,nmo
+      !    WRITE(6,*) (qcschema_env%wavefunction%scf_density_mo_a(i+(j-1)*nmo),j=1,nmo)
+      ! END DO
+
+      ! release the qcschema instance
+      CALL qcschema_env_release(qcschema_env)
 
       CALL timestop(handle)
 
@@ -2654,9 +2699,10 @@ CONTAINS
 !> \param para_env ...
 !> \author Vladimir Rybkin
 ! **************************************************************************************************
-   SUBROUTINE read_active_density(active_space_env, para_env)
+   SUBROUTINE read_active_density(active_space_env, para_env, qcschema_env)
       TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(qcschema_type)                                :: qcschema_env
 
       CHARACTER(LEN=default_path_length)                 :: p_act_filename
       INTEGER                                            :: i1, i2, ispin, l_global, LLL, m1, m2, &
@@ -2666,7 +2712,9 @@ CONTAINS
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
       LOGICAL                                            :: exist
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: p_act, p_act_beta, p_act_beta_read, &
-                                                            p_act_read
+                                                            p_act_read, p_act_a, p_act_b
+      TYPE(cp_logger_type), POINTER                      :: logger
+      CHARACTER(LEN=default_path_length)                 :: filename
 
       ! Find out the spin states
       nspins = SIZE(active_space_env%p_active)
@@ -2681,7 +2729,11 @@ CONTAINS
       ! Allocate active DM
       nmo = nmos(1)
       ALLOCATE (p_act(nmo, nmo))
+      ALLOCATE (p_act_a(nmo, nmo))
+      ALLOCATE (p_act_b(nmo, nmo))
       p_act = 0.0_dp
+      p_act_a = 0.0_dp
+      p_act_b = 0.0_dp
       IF (nspins .EQ. 2) THEN
          nmo = nmos(2)
          ALLOCATE (p_act_beta(nmo, nmo))
@@ -2717,11 +2769,17 @@ CONTAINS
                         unit_number=p_active_unit)
          ! Now read
          READ (p_active_unit) p_act_read
+
+         logger => cp_get_default_logger()
+         filename = TRIM(logger%iter_info%project_name) // '.qcschema.hdf5'
+         CALL read_pmat_from_hdf5(filename, qcschema_env)
+
          DO i1 = 1, SIZE(active_space_env%active_orbitals, 1)
             m1 = active_space_env%active_orbitals(i1, 1)
             DO i2 = 1, SIZE(active_space_env%active_orbitals, 1)
                m2 = active_space_env%active_orbitals(i2, 1)
                p_act(m1, m2) = p_act_read(i1, i2)
+               p_act_a(m1, m2) = qcschema_env%wavefunction%scf_density_mo_a(i2 + (i1-1)*nactive)
             END DO
          END DO
          DEALLOCATE (p_act_read)
@@ -2733,6 +2791,7 @@ CONTAINS
                DO i2 = 1, SIZE(active_space_env%active_orbitals, 1)
                   m2 = active_space_env%active_orbitals(i2, 2)
                   p_act_beta(m1, m2) = p_act_beta_read(i1, i2)
+                  p_act_b(m1, m2) = qcschema_env%wavefunction%scf_density_mo_b(i2 + (i1-1)*nactive)
                END DO
             END DO
             DEALLOCATE (p_act_beta_read)
@@ -2747,8 +2806,10 @@ CONTAINS
 
       ! Copy to full matrix structure
       ! Broadcast the DM on all processes
-      CALL mp_bcast(p_act, para_env%source, para_env%group)
-      IF (nspins .EQ. 2) CALL mp_bcast(p_act_beta, para_env%source, para_env%group)
+      CALL mp_bcast(p_act_a, para_env%source, para_env%group)
+      IF (nspins .EQ. 2) CALL mp_bcast(p_act_b, para_env%source, para_env%group)
+      ! CALL mp_bcast(p_act, para_env%source, para_env%group)
+      ! IF (nspins .EQ. 2) CALL mp_bcast(p_act_beta, para_env%source, para_env%group)
 
       DO ispin = 1, nspins
          ! Copy to fm_type structure
@@ -2764,10 +2825,12 @@ CONTAINS
                m_global = col_indices(MMM)
                IF (ispin .EQ. 1) THEN
                   active_space_env%p_active(ispin)%matrix%local_data(LLL, MMM) = &
-                     p_act(l_global, m_global)
+                     p_act_a(l_global, m_global)
+                     ! p_act(l_global, m_global)
                ELSE
                   active_space_env%p_active(ispin)%matrix%local_data(LLL, MMM) = &
-                     p_act_beta(l_global, m_global)
+                     p_act_b(l_global, m_global)
+                     ! p_act_beta(l_global, m_global)
                END IF
             END DO ! MMM
          END DO ! LLL
@@ -2776,7 +2839,9 @@ CONTAINS
       ! Release memory
       DEALLOCATE (nmos)
       DEALLOCATE (p_act)
+      DEALLOCATE (p_act_a)
       IF (nspins .EQ. 2) DEALLOCATE (p_act_beta)
+      IF (nspins .EQ. 2) DEALLOCATE (p_act_b)
 
    END SUBROUTINE read_active_density
 

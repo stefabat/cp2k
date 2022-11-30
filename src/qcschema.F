@@ -42,23 +42,19 @@ MODULE qcschema
                                              qs_environment_type
    USE hdf5,                           ONLY: h5open_f, h5close_f, &
                                              h5fcreate_f, h5fopen_f, h5fclose_f, &
-                                             h5screate_f, h5screate_simple_f, h5sclose_f, H5S_SCALAR_F, &
-                                             h5gcreate_f, h5gclose_f, &
+                                             h5screate_f, h5screate_simple_f, h5sclose_f, &
+                                             h5sget_simple_extent_npoints_f, H5S_SCALAR_F, &
+                                             h5gcreate_f, h5gopen_f, h5gclose_f, &
                                              h5acreate_f, h5awrite_f, h5aclose_f, &
-                                             h5dcreate_f, h5dwrite_f, h5dwrite_vl_f, h5dclose_f, &
+                                             h5dcreate_f, h5dopen_f, h5dwrite_f, h5dread_f, h5dclose_f, &
+                                             h5dget_space_f, &
                                              h5tset_size_f, h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
-                                             h5tcreate_f, h5tenum_insert_f, h5tclose_f, h5tvlen_create_f, &
+                                             h5tcreate_f, h5tenum_insert_f, h5tclose_f, &
                                              H5T_STRING, H5T_CSET_UTF8_F, H5T_ENUM_F, &
                                              H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
                                              H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, &
-                                             SIZE_T, H5T_C_S1, HSIZE_T, H5S_SIMPLE_F
+                                             SIZE_T, H5T_C_S1, HSIZE_T, H5F_ACC_RDONLY_F
    USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int
-   ! USE h5lt,                           ONLY: h5ltset_attribute_string_f, &
-   !                                           h5ltset_attribute_double_f, &
-   !                                           h5ltmake_dataset_double_f, &
-   !                                           h5ltmake_dataset_int_f, &
-   !                                           ! h5ltmake_dataset_string_f, &
-   !                                           h5ltset_attribute_int_f
 
 #include "./base/base_uses.f90"
 
@@ -70,7 +66,7 @@ MODULE qcschema
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
    PUBLIC :: qcschema_type
-   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5
+   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5, read_pmat_from_hdf5
 
 
 ! **************************************************************************************************
@@ -467,19 +463,26 @@ MODULE qcschema
       ! get the right indices to extract the MO information
       i_glb_start = active_space_env%active_orbitals(1, 1)
       i_glb_end   = active_space_env%active_orbitals(nmo, 1)
+
       ! alpha MO energies
       ALLOCATE (qcschema_env%wavefunction%scf_eigenvalues_a(nmo))
       qcschema_env%wavefunction%scf_eigenvalues_a(1:nmo) = &
-      active_space_env%mos_active(1)%eigenvalues(i_glb_start:i_glb_end)
+         active_space_env%mos_active(1)%eigenvalues(i_glb_start:i_glb_end)
+
       ! alpha MO occupations
       ALLOCATE (qcschema_env%wavefunction%scf_occupations_a(nmo))
       qcschema_env%wavefunction%scf_occupations_a(1:nmo) = &
-      active_space_env%mos_active(1)%occupation_numbers(i_glb_start:i_glb_end)
+         active_space_env%mos_active(1)%occupation_numbers(i_glb_start:i_glb_end)
 
       ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo*nmo))
       ! alpha Fock matrix
       CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
          qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
+
+      ALLOCATE (qcschema_env%wavefunction%scf_density_mo_a(nmo*nmo))
+      ! alpha density matrix
+      CALL subspace_symm_matrix_to_array(active_space_env%p_active(1)%matrix, &
+         qcschema_env%wavefunction%scf_density_mo_a, i_glb_start, i_glb_end)
 
       ALLOCATE (qcschema_env%wavefunction%scf_orbitals_a(nao*nmo))
       ! alpha MOs coefficients
@@ -489,19 +492,26 @@ MODULE qcschema
       IF (nspins == 2) THEN
          i_glb_start = active_space_env%active_orbitals(1, 2)
          i_glb_end   = active_space_env%active_orbitals(nmo, 2)
+
          ! beta MO energies
          ALLOCATE (qcschema_env%wavefunction%scf_eigenvalues_b(nmo))
          qcschema_env%wavefunction%scf_eigenvalues_b(1:nmo) = &
-         active_space_env%mos_active(2)%eigenvalues(i_glb_start:i_glb_end)
+            active_space_env%mos_active(2)%eigenvalues(i_glb_start:i_glb_end)
+
          ! beta MO occupations
          ALLOCATE (qcschema_env%wavefunction%scf_occupations_b(nmo))
          qcschema_env%wavefunction%scf_occupations_b(1:nmo) = &
-         active_space_env%mos_active(2)%occupation_numbers(i_glb_start:i_glb_end)
+            active_space_env%mos_active(2)%occupation_numbers(i_glb_start:i_glb_end)
 
          ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_b(nmo*nmo))
          ! beta Fock matrix
          CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2)%matrix, &
             qcschema_env%wavefunction%scf_fock_mo_b, i_glb_start, i_glb_end)
+
+         ALLOCATE (qcschema_env%wavefunction%scf_density_mo_b(nmo*nmo))
+         ! beta density matrix
+         CALL subspace_symm_matrix_to_array(active_space_env%p_active(2)%matrix, &
+            qcschema_env%wavefunction%scf_density_mo_b, i_glb_start, i_glb_end)
 
          ALLOCATE (qcschema_env%wavefunction%scf_orbitals_b(nao*nmo))
          ! alpha MOs coefficients
@@ -707,16 +717,16 @@ MODULE qcschema
       logger => cp_get_default_logger()
       output_unit = cp_logger_get_default_io_unit(logger)
 
+
       ! initialize HDF5 Fortran API
       CALL h5open_f(error)
-      IF (error < 0) THEN
-         WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") &
-         ' ERROR: initialization of HDF5 interface failed'
-         RETURN
-      ENDIF
+      IF (error < 0) CPABORT('ERROR: initialization of HDF5 interface failed')
 
+
+      ! create qcschema hdf5 file
       filename = TRIM(logger%iter_info%project_name) // '.qcschema.hdf5'
       CALL h5fcreate_f(filename, H5F_ACC_TRUNC_F, file_id, error)
+      IF (error < 0) CPABORT('ERROR: creation of HDF5 file failed')
 
 
       ! !===========================================================================!
@@ -845,6 +855,9 @@ MODULE qcschema
       CALL h5dwrite_double_simple(group_id, 'scf_fock_mo_a', &
                                   qcschema_env%wavefunction%scf_fock_mo_a)
 
+      CALL h5dwrite_double_simple(group_id, 'scf_density_mo_a', &
+                                  qcschema_env%wavefunction%scf_density_mo_a)
+
       CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_aa', &
                                   qcschema_env%wavefunction%scf_eri_mo_aa)
 
@@ -860,6 +873,9 @@ MODULE qcschema
 
          CALL h5dwrite_double_simple(group_id, 'scf_fock_mo_b', &
                                      qcschema_env%wavefunction%scf_fock_mo_b)
+
+         CALL h5dwrite_double_simple(group_id, 'scf_density_mo_b', &
+                                     qcschema_env%wavefunction%scf_density_mo_b)
       END IF
 
       ! close wavefunction group
@@ -886,9 +902,49 @@ MODULE qcschema
 
       CALL h5close_f(error)
 
+      WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") 'qcschema hdf5 file written!'
 
    END SUBROUTINE qcschema_to_hdf5
 
+
+! **************************************************************************************************
+!> \brief Writes a qcschema object to an hdf5 file
+!> \param qcschema_env the qcschema environment to write to file
+! **************************************************************************************************
+   SUBROUTINE read_pmat_from_hdf5(filename, qcschema_env)
+      CHARACTER(LEN=default_path_length), INTENT(IN)  :: filename
+      TYPE(qcschema_type), INTENT(INOUT)              :: qcschema_env
+      INTEGER                                         :: error, nmo
+      INTEGER(KIND=hid_t)                             :: file_id, group_id
+
+
+      ! initialize HDF5 Fortran API
+      CALL h5open_f(error)
+      IF (error < 0) CPABORT('ERROR: initialization of HDF5 interface failed')
+
+      ! open qcschema hdf5 file
+      CALL h5fopen_f(TRIM(filename), H5F_ACC_RDONLY_F, file_id, error)
+
+      ! open the wave function group
+      CALL h5gopen_f(file_id, 'wavefunction', group_id, error)
+      IF (error < 0) CPABORT('ERROR: group "wavefunction" does not exist')
+
+      ! allocate the space for the array containing the density
+      nmo = qcschema_env%properties%calcinfo_nmo
+      IF (.NOT. ALLOCATED (qcschema_env%wavefunction%scf_density_mo_a)) THEN
+         ALLOCATE (qcschema_env%wavefunction%scf_density_mo_a(nmo*nmo))
+      END IF
+
+      ! read the density
+      CALL h5dread_double_simple(group_id, 'scf_density_mo_a', qcschema_env%wavefunction%scf_density_mo_a)
+
+      ! close everything
+      CALL h5gclose_f(group_id, error)
+      CALL h5fclose_f(file_id, error)
+      CALL h5close_f(error)
+
+
+   END SUBROUTINE read_pmat_from_hdf5
 
 ! **************************************************************************************************
 !> \brief Copy a (square portion) of a `cp_fm_type` matrix to a standard 1D Fortran array
@@ -1520,8 +1576,8 @@ MODULE qcschema
 ! **************************************************************************************************
 !> \brief Write a dataset containing an array of doubles
 !> \param loc_id either file id or group id
-!> \param dset_name the name of the attribute
-!> \param dset_data the attribute data, i.e. the array of integers
+!> \param dset_name the name of the dataset
+!> \param dset_data the dataset data, i.e. the array of doubles
 ! **************************************************************************************************
    SUBROUTINE h5dwrite_double_simple(loc_id, dset_name, dset_data)
       INTEGER(KIND=hid_t), INTENT(IN)                 :: loc_id
@@ -1532,7 +1588,7 @@ MODULE qcschema
       TYPE(c_ptr)                                     :: buffer
       INTEGER(KIND=hsize_t), DIMENSION(1)             :: dims
 
-      dims(1) = SIZE(dset_data, kind=hsize_t)   ! length of array of strings
+      dims(1) = SIZE(dset_data, kind=hsize_t)   ! length of array
 
       ! set the type of data
       type_id = H5T_NATIVE_DOUBLE
@@ -1541,7 +1597,7 @@ MODULE qcschema
       CALL h5screate_simple_f(1, dims, space_id, error)
       IF (error < 0) CPABORT('ERROR: creation of HDF5 dataspace failed')
 
-      ! create the atrtibute
+      ! create the dataset
       CALL h5dcreate_f(loc_id, dset_name, type_id, space_id, dset_id, error)
       IF (error < 0) CPABORT('ERROR: creation of HDF5 dataset failed')
 
@@ -1552,7 +1608,7 @@ MODULE qcschema
       CALL h5dwrite_f(dset_id, type_id, buffer, error)
       IF (error < 0) CPABORT('ERROR: writing of HDF5 dataset failed')
 
-      ! close attribute
+      ! close dataset
       CALL h5dclose_f(dset_id, error)
       IF (error < 0) CPABORT('ERROR: closing of HDF5 dataset failed')
 
@@ -1561,6 +1617,55 @@ MODULE qcschema
       IF (error < 0) CPABORT('ERROR: closing of HDF5 dataspace failed')
 
    END SUBROUTINE h5dwrite_double_simple
+
+
+! **************************************************************************************************
+!> \brief Read a dataset containing an array of doubles
+!> \param loc_id either file id or group id
+!> \param dset_name the name of the dataset
+!> \param dset_data where the read dataset data will be written
+! **************************************************************************************************
+   SUBROUTINE h5dread_double_simple(loc_id, dset_name, dset_data)
+      INTEGER(KIND=hid_t), INTENT(IN)                       :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)                          :: dset_name
+      REAL(KIND=dp), INTENT(OUT), DIMENSION(:)              :: dset_data
+      INTEGER(KIND=hid_t)                                   :: space_id, dset_id, type_id, npoints
+      INTEGER                                               :: error
+      INTEGER(KIND=hsize_t), DIMENSION(1)                   :: dims
+
+      dims(1) = SIZE(dset_data, kind=hsize_t)   ! length of array
+
+      ! set the type of data
+      type_id = H5T_NATIVE_DOUBLE
+
+      ! open the dataset
+      CALL h5dopen_f(loc_id, dset_name, dset_id, error)
+      IF (error < 0) CPABORT('ERROR: opening HDF5 dataset failed')
+
+      ! get information on the dataspace
+      CALL h5dget_space_f(dset_id, space_id, error)
+      IF (error < 0) CPABORT('ERROR: fetching HDF5 dataspace info failed')
+
+      ! get dataspace dims
+      CALL h5sget_simple_extent_npoints_f(space_id, npoints, error)
+      IF (error < 0) CPABORT('ERROR: fetching HDF5 dataspace dimension failed')
+
+      ! Why doesn't this pass?
+      ! CPASSERT(dims(1) == INT(npoints*npoints, kind=hsize_t))
+
+      ! read the data
+      CALL h5dread_f(dset_id, type_id, dset_data, dims, error)
+      IF (error < 0) CPABORT('ERROR: reading HDF5 dataset failed')
+
+      ! close dataset
+      CALL h5dclose_f(dset_id, error)
+      IF (error < 0) CPABORT('ERROR: closing HDF5 dataset failed')
+
+      ! close dataspace
+      CALL h5sclose_f(space_id, error)
+      IF (error < 0) CPABORT('ERROR: closing HDF5 dataspace failed')
+
+   END SUBROUTINE h5dread_double_simple
 
 
 END MODULE qcschema
