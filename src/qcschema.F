@@ -924,10 +924,11 @@ MODULE qcschema
 
       ! open qcschema hdf5 file
       CALL h5fopen_f(TRIM(filename), H5F_ACC_RDONLY_F, file_id, error)
+      IF (error < 0) CPABORT('ERROR: opening of HDF5 file failed')
 
       ! open the wave function group
       CALL h5gopen_f(file_id, 'wavefunction', group_id, error)
-      IF (error < 0) CPABORT('ERROR: group "wavefunction" does not exist')
+      IF (error < 0) CPABORT('ERROR: opening of "wavefunction" group failed')
 
       ! allocate the space for the array containing the density
       nmo = qcschema_env%properties%calcinfo_nmo
@@ -935,8 +936,16 @@ MODULE qcschema
          ALLOCATE (qcschema_env%wavefunction%scf_density_mo_a(nmo*nmo))
       END IF
 
-      ! read the density
+      ! read the alpha density
       CALL h5dread_double_simple(group_id, 'scf_density_mo_a', qcschema_env%wavefunction%scf_density_mo_a)
+
+      IF (.NOT. qcschema_env%wavefunction%restricted) THEN
+         IF (.NOT. ALLOCATED (qcschema_env%wavefunction%scf_density_mo_b)) THEN
+            ALLOCATE (qcschema_env%wavefunction%scf_density_mo_b(nmo*nmo))
+         END IF
+         ! read the beta density
+         CALL h5dread_double_simple(group_id, 'scf_density_mo_b', qcschema_env%wavefunction%scf_density_mo_b)
+      END IF
 
       ! close everything
       CALL h5gclose_f(group_id, error)
