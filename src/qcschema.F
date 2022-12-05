@@ -66,7 +66,8 @@ MODULE qcschema
    CHARACTER(LEN=*), PARAMETER, PRIVATE :: moduleN = 'qcschema'
 
    PUBLIC :: qcschema_type
-   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5, read_pmat_from_hdf5
+   PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5, &
+             read_pmat_from_hdf5, qcschema_update_fock
 
 
 ! **************************************************************************************************
@@ -908,8 +909,9 @@ MODULE qcschema
 
 
 ! **************************************************************************************************
-!> \brief Writes a qcschema object to an hdf5 file
-!> \param qcschema_env the qcschema environment to write to file
+!> \brief Reads the electron density from a qcschema hdf5 file
+!> \param filename the path to the qcschema hdf5 file
+!> \param qcschema_env the qcschema environment onto which it writes the density
 ! **************************************************************************************************
    SUBROUTINE read_pmat_from_hdf5(filename, qcschema_env)
       CHARACTER(LEN=default_path_length), INTENT(IN)  :: filename
@@ -952,8 +954,43 @@ MODULE qcschema
       CALL h5fclose_f(file_id, error)
       CALL h5close_f(error)
 
-
    END SUBROUTINE read_pmat_from_hdf5
+
+
+! **************************************************************************************************
+!> \brief Updates the Fock matrix and the inactive energy in a qcschema object
+!> \param qcschema_env the qcschema environment
+!> \param active_space_env the active space environment with the updated data
+! **************************************************************************************************
+   SUBROUTINE qcschema_update_fock(qcschema_env, active_space_env)
+      TYPE(qcschema_type), INTENT(INOUT)              :: qcschema_env
+      TYPE(active_space_type), INTENT(IN), POINTER    :: active_space_env
+      INTEGER                                         :: nmo, i_glb_start, i_glb_end
+
+      nmo = qcschema_env%properties%calcinfo_nmo
+
+      ! get the right indices to extract the MO information
+      i_glb_start = active_space_env%active_orbitals(1, 1)
+      i_glb_end   = active_space_env%active_orbitals(nmo, 1)
+
+      ! alpha Fock matrix
+      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
+         qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
+
+      ! beta Fock matrix
+      IF (active_space_env%nspins == 2) THEN
+         i_glb_start = active_space_env%active_orbitals(1, 2)
+         i_glb_end   = active_space_env%active_orbitals(nmo, 2)
+
+         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2)%matrix, &
+            qcschema_env%wavefunction%scf_fock_mo_b, i_glb_start, i_glb_end)
+      END IF
+
+      ! update inactive energy
+      qcschema_env%properties%nuclear_repulsion_energy = active_space_env%energy_inactive
+
+   END SUBROUTINE qcschema_update_fock
+
 
 ! **************************************************************************************************
 !> \brief Copy a (square portion) of a `cp_fm_type` matrix to a standard 1D Fortran array

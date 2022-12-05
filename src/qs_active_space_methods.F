@@ -139,7 +139,7 @@ MODULE qs_active_space_methods
                                               task_list_type
    USE qcschema,                        ONLY: qcschema_type, qcschema_env_create, &
                                               qcschema_env_release, qcschema_to_hdf5, &
-                                              read_pmat_from_hdf5
+                                              read_pmat_from_hdf5, qcschema_update_fock
 
 #include "./base/base_uses.f90"
 
@@ -2465,7 +2465,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'update_active_space'
 
-      INTEGER                                            :: handle, ispin, nao, nmo, nspins!, i, j
+      INTEGER                                            :: handle, ispin, nao, nmo, nspins, i, j, nmo_act
       LOGICAL                                            :: should_stop
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: p_ref
       TYPE(cp_fm_type)                                   :: lamat, vec
@@ -2583,6 +2583,10 @@ CONTAINS
             ! inactive subspace energy and active Fock operator
             CALL subspace_fock_matrix(active_space_env)
             CALL fcidump(active_space_env, as_input)
+
+            CALL qcschema_update_fock(qcschema_env, active_space_env)
+            CALL qcschema_to_hdf5(qcschema_env)
+
             CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
             active_space_env%energy_ref = energy%total
          END DO
@@ -2597,12 +2601,6 @@ CONTAINS
          ! dump qcschema to file
          CALL qcschema_to_hdf5(qcschema_env)
       END IF
-
-      ! nmo = qcschema_env%properties%calcinfo_nmo
-      ! WRITE(6,*) 'scf_density_mo_a read from hdf5 file:'
-      ! DO i = 1,nmo
-      !    WRITE(6,*) (qcschema_env%wavefunction%scf_density_mo_a(i+(j-1)*nmo),j=1,nmo)
-      ! END DO
 
       ! release the qcschema instance
       CALL qcschema_env_release(qcschema_env)
