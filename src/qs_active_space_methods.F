@@ -2707,14 +2707,11 @@ CONTAINS
       CHARACTER(LEN=default_path_length)                 :: p_act_filename
       INTEGER                                            :: i1, i2, ispin, l_global, LLL, m1, m2, &
                                                             m_global, MMM, nactive, ncol_local, &
-                                                            nmo, nrow_local, nspins, p_active_unit
+                                                            nmo, nrow_local, nspins
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: nmos
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
       LOGICAL                                            :: exist
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: p_act, p_act_beta, p_act_beta_read, &
-                                                            p_act_read, p_act_a, p_act_b
-      TYPE(cp_logger_type), POINTER                      :: logger
-      CHARACTER(LEN=default_path_length)                 :: filename
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: p_act, p_act_beta
 
       ! Find out the spin states
       nspins = SIZE(active_space_env%p_active)
@@ -2729,11 +2726,7 @@ CONTAINS
       ! Allocate active DM
       nmo = nmos(1)
       ALLOCATE (p_act(nmo, nmo))
-      ALLOCATE (p_act_a(nmo, nmo))
-      ALLOCATE (p_act_b(nmo, nmo))
       p_act = 0.0_dp
-      p_act_a = 0.0_dp
-      p_act_b = 0.0_dp
       IF (nspins .EQ. 2) THEN
          nmo = nmos(2)
          ALLOCATE (p_act_beta(nmo, nmo))
@@ -2752,64 +2745,33 @@ CONTAINS
 
          ! the actual active size may be different
          nactive = SIZE(active_space_env%active_orbitals, 1)
-         ! Allocate active DM to read
-         ALLOCATE (p_act_read(nactive, nactive))
-         p_act_read = 0.0_dp
-         IF (nspins .EQ. 2) THEN
-            ALLOCATE (p_act_beta_read(nactive, nactive))
-            p_act_beta_read = 0.0_dp
-         END IF
 
-         p_active_unit = -1
-         CALL open_file(file_name=p_act_filename, &
-                        file_action="READ", &
-                        file_form="UNFORMATTED", &
-                        file_status="UNKNOWN", &
-                        file_access='STREAM', &
-                        unit_number=p_active_unit)
-         ! Now read
-         READ (p_active_unit) p_act_read
-
-         logger => cp_get_default_logger()
-         filename = TRIM(logger%iter_info%project_name) // '.qcschema.hdf5'
-         CALL read_pmat_from_hdf5(filename, qcschema_env)
+         CALL read_pmat_from_hdf5(p_act_filename, qcschema_env)
 
          DO i1 = 1, SIZE(active_space_env%active_orbitals, 1)
             m1 = active_space_env%active_orbitals(i1, 1)
             DO i2 = 1, SIZE(active_space_env%active_orbitals, 1)
                m2 = active_space_env%active_orbitals(i2, 1)
-               p_act(m1, m2) = p_act_read(i1, i2)
-               p_act_a(m1, m2) = qcschema_env%wavefunction%scf_density_mo_a(i2 + (i1-1)*nactive)
+               p_act(m1, m2) = qcschema_env%wavefunction%scf_density_mo_a(i2 + (i1-1)*nactive)
             END DO
          END DO
-         DEALLOCATE (p_act_read)
 
          IF (nspins .EQ. 2) THEN
-            READ (p_active_unit) p_act_beta_read
             DO i1 = 1, SIZE(active_space_env%active_orbitals, 1)
                m1 = active_space_env%active_orbitals(i1, 2)
                DO i2 = 1, SIZE(active_space_env%active_orbitals, 1)
                   m2 = active_space_env%active_orbitals(i2, 2)
-                  p_act_beta(m1, m2) = p_act_beta_read(i1, i2)
-                  p_act_b(m1, m2) = qcschema_env%wavefunction%scf_density_mo_b(i2 + (i1-1)*nactive)
+                  p_act_beta(m1, m2) = qcschema_env%wavefunction%scf_density_mo_b(i2 + (i1-1)*nactive)
                END DO
             END DO
-            DEALLOCATE (p_act_beta_read)
-         END IF
-
-         ! Close restart file
-         IF (para_env%ionode) THEN
-            CALL close_file(unit_number=p_active_unit)
          END IF
 
       END IF
 
       ! Copy to full matrix structure
       ! Broadcast the DM on all processes
-      CALL mp_bcast(p_act_a, para_env%source, para_env%group)
-      IF (nspins .EQ. 2) CALL mp_bcast(p_act_b, para_env%source, para_env%group)
-      ! CALL mp_bcast(p_act, para_env%source, para_env%group)
-      ! IF (nspins .EQ. 2) CALL mp_bcast(p_act_beta, para_env%source, para_env%group)
+      CALL mp_bcast(p_act, para_env%source, para_env%group)
+      IF (nspins .EQ. 2) CALL mp_bcast(p_act_beta, para_env%source, para_env%group)
 
       DO ispin = 1, nspins
          ! Copy to fm_type structure
@@ -2825,12 +2787,10 @@ CONTAINS
                m_global = col_indices(MMM)
                IF (ispin .EQ. 1) THEN
                   active_space_env%p_active(ispin)%matrix%local_data(LLL, MMM) = &
-                     p_act_a(l_global, m_global)
-                     ! p_act(l_global, m_global)
+                     p_act(l_global, m_global)
                ELSE
                   active_space_env%p_active(ispin)%matrix%local_data(LLL, MMM) = &
-                     p_act_b(l_global, m_global)
-                     ! p_act_beta(l_global, m_global)
+                     p_act_beta(l_global, m_global)
                END IF
             END DO ! MMM
          END DO ! LLL
@@ -2839,9 +2799,7 @@ CONTAINS
       ! Release memory
       DEALLOCATE (nmos)
       DEALLOCATE (p_act)
-      DEALLOCATE (p_act_a)
       IF (nspins .EQ. 2) DEALLOCATE (p_act_beta)
-      IF (nspins .EQ. 2) DEALLOCATE (p_act_b)
 
    END SUBROUTINE read_active_density
 
