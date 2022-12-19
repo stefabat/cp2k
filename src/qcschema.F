@@ -390,13 +390,15 @@ MODULE qcschema
       nel = active_space_env%nelec_active
 
       ! TODO: I think this info should be on the AS env
-      IF (MOD(nel,2) == 1) THEN
-         nalpha = (nel+1)/2
-         nbeta  = (nel-1)/2
-      ELSE
-         nalpha = nel/2
-         nbeta  = nel/2
-      END IF
+      ! IF (MOD(nel,2) == 1) THEN
+      !    nalpha = (nel+1)/2
+      !    nbeta  = (nel-1)/2
+      ! ELSE
+      !    nalpha = nel/2
+      !    nbeta  = nel/2
+      ! END IF
+      nalpha = active_space_env%nelec_active_spinwise(1)
+      nbeta =  active_space_env%nelec_active_spinwise(2)
 
       qcschema_env%properties%calcinfo_natom  = natoms
       qcschema_env%properties%calcinfo_nbasis = nao
@@ -488,7 +490,7 @@ MODULE qcschema
       ALLOCATE (qcschema_env%wavefunction%scf_orbitals_a(nao*nmo))
       ! alpha MOs coefficients
       CALL subspace_full_matrix_to_array(active_space_env%mos_active(1)%mo_coeff, &
-         qcschema_env%wavefunction%scf_orbitals_a, nao, nmo, 1, i_glb_start)
+         qcschema_env%wavefunction%scf_orbitals_a, 1, i_glb_start, nao, nmo)
 
       IF (nspins == 2) THEN
          i_glb_start = active_space_env%active_orbitals(1, 2)
@@ -515,16 +517,27 @@ MODULE qcschema
             qcschema_env%wavefunction%scf_density_mo_b, i_glb_start, i_glb_end)
 
          ALLOCATE (qcschema_env%wavefunction%scf_orbitals_b(nao*nmo))
-         ! alpha MOs coefficients
+         ! beta MOs coefficients
          CALL subspace_full_matrix_to_array(active_space_env%mos_active(2)%mo_coeff, &
-            qcschema_env%wavefunction%scf_orbitals_b, nao, nmo, i_glb_start, i_glb_end)
+            qcschema_env%wavefunction%scf_orbitals_b, 1, i_glb_start, nao, nmo)
       END IF
 
-      ! get the eri
+      ! get the alpha-alpha eri
       ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa(nmo**4))
       CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_aa, &
-                        active_space_env%active_orbitals, 1)
+                        active_space_env%active_orbitals, 1, 1)
 
+      IF (nspins == 2) THEN
+         ! get the alpha-beta eri
+         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_ab(nmo**4))
+         CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_ab, &
+                           active_space_env%active_orbitals, 1, 2)
+
+         ! get the beta-beta eri
+         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_bb(nmo**4))
+         CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_bb, &
+                           active_space_env%active_orbitals, 2, 2)
+      END IF
 
       !========================================================================================!
       ! *** QCSchema model ***
@@ -877,6 +890,13 @@ MODULE qcschema
 
          CALL h5dwrite_double_simple(group_id, 'scf_density_mo_b', &
                                      qcschema_env%wavefunction%scf_density_mo_b)
+
+         CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_bb', &
+                                     qcschema_env%wavefunction%scf_eri_mo_bb)
+
+         CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_ab', &
+                                     qcschema_env%wavefunction%scf_eri_mo_ab)
+
       END IF
 
       ! close wavefunction group
@@ -1035,8 +1055,8 @@ MODULE qcschema
 !> \param first_row the row index from which the submatrix starts
 !> \param first_col the col index at which the submatrix starts
 ! **************************************************************************************************
-   SUBROUTINE subspace_full_matrix_to_array(matrix, array, nrows, ncols, first_row, first_col)
-      INTEGER, INTENT(IN)                                :: nrows, ncols, first_row, first_col
+   SUBROUTINE subspace_full_matrix_to_array(matrix, array, first_row, first_col, nrows, ncols)
+      INTEGER, INTENT(IN)                                :: first_row, first_col, nrows, ncols
       TYPE(cp_fm_type), INTENT(IN)                       :: matrix
       REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: array
 
@@ -1068,11 +1088,11 @@ MODULE qcschema
 !> \param isp1 the spin of the bra
 !> \param isp2 the spin of the ket
 ! **************************************************************************************************
-   SUBROUTINE eri_to_array(eri_env, array, active_orbitals, isp1)
+   SUBROUTINE eri_to_array(eri_env, array, active_orbitals, spin1, spin2)
       TYPE(eri_type), INTENT(IN)                         :: eri_env
       REAL(KIND=dp), DIMENSION(:), INTENT(INOUT)         :: array
       INTEGER, DIMENSION(:, :), INTENT(IN)               :: active_orbitals
-      INTEGER, INTENT(IN)                                :: isp1
+      INTEGER, INTENT(IN)                                :: spin1, spin2
       TYPE(dbcsr_csr_type), POINTER                      :: eri
       INTEGER                                            :: i1, i2, i3, i4, &
                                                             i, j, k, l, &
@@ -1088,15 +1108,22 @@ MODULE qcschema
       nmo_total = eri_env%norb
       nmo_inactive = nmo_total - nmo_active
       nindex = (nmo_total*(nmo_total + 1))/2
-      eri => eri_env%eri(1)%csr_mat
+      if (spin1 == 1 .and. spin2 == 1) then
+         eri => eri_env%eri(1)%csr_mat
+      else if ((spin1 == 1 .and. spin2 == 2) .or. (spin1 == 2 .and. spin2 == 1)) then
+         eri => eri_env%eri(2)%csr_mat
+      else
+         eri => eri_env%eri(3)%csr_mat
+      end if
+
       irange = get_irange_csr(nindex, eri%mp_group)
 
       array = 0.0_dp
 
       DO i = 1, nmo_active
-         i1 = active_orbitals(i, isp1)
+         i1 = active_orbitals(i, spin1)
          DO j = i, nmo_active
-            i2 = active_orbitals(j, isp1)
+            i2 = active_orbitals(j, spin2)
             i12 = csr_idx_to_combined(i1, i2, nmo_total)
             IF (i12 >= irange(1) .AND. i12 <= irange(2)) THEN
                i12l = i12 - irange(1) + 1

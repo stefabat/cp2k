@@ -196,10 +196,10 @@ CONTAINS
 
       CHARACTER(len=10)                                  :: cshell, lnam(5)
       CHARACTER(LEN=default_path_length)                 :: p_act_filename
-      INTEGER :: eri_method, eri_operator, eri_print, handle, i, iatom, ishell, isp, ispin, iw, j, &
-         jm, l, m, max_orb_ind, mselect, n1, n2, nao, natom, ncol, nel, nelec_active, &
-         nelec_inactive, nelec_inactive_alpha, nelec_inactive_beta, nelec_total, nmo, nn1, nn2, &
-         nrow_global, nspins, nvirt, zval
+      INTEGER :: eri_method, eri_operator, eri_print, handle, i, iatom, ishell, isp, ispin, iw, j, jm, &
+         l, m, max_orb_ind, mselect, n1, n2, nao, natom, ncol, nel, nelec_active, nelec_active_alpha, &
+         nelec_active_beta, nelec_inactive, nelec_inactive_alpha, nelec_inactive_beta, nelec_total, &
+         nmo, nn1, nn2, nrow_global, nspins, nvirt, zval, nmo_tot, nmo_available
       INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: active_orbitals
       INTEGER, DIMENSION(2)                              :: nactive_orb, nepol, ninactive_orb
       INTEGER, DIMENSION(5)                              :: nshell
@@ -354,12 +354,18 @@ CONTAINS
       IF (nspins == 1) THEN
          active_space_env%nelec_total(1) = nelec_total
          active_space_env%nelec_total(2) = 0
+         nelec_active_alpha = nelec_active
+         nelec_active_beta  = 0
       ELSE
          active_space_env%nelec_total(1) = nepol(1)
          active_space_env%nelec_total(2) = nepol(2)
+         nelec_active_alpha = nepol(1) - nelec_inactive_alpha
+         nelec_active_beta  = nepol(2) - nelec_inactive_beta
       END IF
       active_space_env%nelec_inactive_spinwise(1) = nelec_inactive_alpha
       active_space_env%nelec_inactive_spinwise(2) = nelec_inactive_beta
+      active_space_env%nelec_active_spinwise(1) = nelec_active_alpha
+      active_space_env%nelec_active_spinwise(2) = nelec_active_beta
       active_space_env%multiplicity = dft_control%multiplicity
       active_space_env%nspins = nspins
 
@@ -482,14 +488,14 @@ CONTAINS
       CASE (casci_canonical)
          CALL get_qs_env(qs_env, mos=mos)
 
-         nmo = 0
-         DO ispin = 1, nspins
-            CALL get_mo_set(mos(ispin), nmo=m)
+         ! nmo = 0
+         ! DO ispin = 1, nspins
+         !    CALL get_mo_set(mos(ispin), nmo=m)
             ! IF (m < ninactive_orb(ispin) + nactive_orb(ispin)) THEN
             !    CPABORT("Not enough canonical orbitals available.")
             ! END IF
-            nmo = MAX(m, nmo)
-         END DO
+         !    nmo = MAX(m, nmo)
+         ! END DO
 
          ! set inactive orbital indices
          ALLOCATE (active_space_env%inactive_orbitals(MAXVAL(ninactive_orb), nspins))
@@ -501,39 +507,38 @@ CONTAINS
             END DO
          END DO
 
-         max_orb_ind = 0
+         ! total number of inactive plus active orbitals spinwise
+         ! (should be the same for alpha and beta though)
+         nmo_tot = 0
          ! set active orbital indices
          ALLOCATE (active_space_env%active_orbitals(MAXVAL(nactive_orb), nspins))
          DO ispin = 1, nspins
             i = 1
             DO m = ninactive_orb(ispin) + 1, ninactive_orb(ispin) + nactive_orb(ispin)
                active_space_env%active_orbitals(i, ispin) = m
-               max_orb_ind = MAX(m, max_orb_ind)
+               nmo_tot = MAX(m, nmo_tot)
                i = i + 1
             END DO
          END DO
 
-         CALL get_mo_set(mos(1), mo_coeff=fm_ref, nao=nao, nmo=nmo)
+         CALL get_mo_set(mos(1), mo_coeff=fm_ref, nao=nao)
          CALL cp_fm_get_info(fm_ref, context=context, para_env=para_env, &
                              nrow_global=nrow_global)
-         nvirt = max_orb_ind - nmo
-         nvirt = MAX(nvirt, 0)
-         nmo = max_orb_ind
 
          maxocc = 2.0_dp
          IF (nspins > 1) maxocc = 1.0_dp
          ALLOCATE (active_space_env%mos_active(nspins))
          ALLOCATE (active_space_env%mos_inactive(nspins))
          DO ispin = 1, nspins
-            CALL allocate_mo_set(active_space_env%mos_active(ispin), nao, nmo, 0, 0.0_dp, maxocc, 0.0_dp)
+            CALL allocate_mo_set(active_space_env%mos_active(ispin), nao, nmo_tot, 0, 0.0_dp, maxocc, 0.0_dp)
             CALL cp_fm_struct_create(fm_struct_tmp, para_env=para_env, context=context, &
-                                     nrow_global=nrow_global, ncol_global=nmo)
+                                     nrow_global=nrow_global, ncol_global=nmo_tot)
             CALL init_mo_set(active_space_env%mos_active(ispin), fm_struct=fm_struct_tmp, name="Active Space MO")
             CALL cp_fm_struct_release(fm_struct_tmp)
             nel = active_space_env%nelec_inactive_spinwise(ispin)
-            CALL allocate_mo_set(active_space_env%mos_inactive(ispin), nao, nmo, nel, REAL(nel, KIND=dp), maxocc, 0.0_dp)
+            CALL allocate_mo_set(active_space_env%mos_inactive(ispin), nao, nmo_tot, nel, REAL(nel, KIND=dp), maxocc, 0.0_dp)
             CALL cp_fm_struct_create(fm_struct_tmp, para_env=para_env, context=context, &
-                                     nrow_global=nrow_global, ncol_global=nmo)
+                                     nrow_global=nrow_global, ncol_global=nmo_tot)
             CALL init_mo_set(active_space_env%mos_inactive(ispin), fm_struct=fm_struct_tmp, name="Inactive Space MO")
             CALL cp_fm_struct_release(fm_struct_tmp)
          END DO
@@ -546,12 +551,15 @@ CONTAINS
                CPABORT("ADMM currently not possible for canonical orbital options")
             END IF
 
-            ALLOCATE (eigenvalues(nmo, nspins))
+            ALLOCATE (eigenvalues(nmo_tot, nspins))
             eigenvalues = 100000._dp
             CALL get_qs_env(qs_env, matrix_ks=ks_matrix, matrix_s=s_matrix, scf_control=scf_control)
 
             DO ispin = 1, nspins
-               CALL get_mo_set(mos(ispin), mo_coeff=fm_ref, nmo=nmo)
+               CALL get_mo_set(mos(ispin), mo_coeff=fm_ref, nmo=nmo_available)
+
+               nvirt = nmo_tot - nmo_available
+               nvirt = MAX(nvirt, 0)
 
                NULLIFY (evals_virt)
                ALLOCATE (evals_virt(nvirt))
@@ -572,10 +580,9 @@ CONTAINS
                                    eps_gradient=scf_control%eps_lumos, &
                                    preconditioner=local_preconditioner, &
                                    iter_max=scf_control%max_iter_lumos, &
-                                   size_ortho_space=nmo)
+                                   size_ortho_space=nmo_available)
 
-               CALL calculate_subspace_eigenvalues(mo_virt, ks_matrix(ispin)%matrix, &
-                                                   evals_virt)
+               CALL calculate_subspace_eigenvalues(mo_virt, ks_matrix(ispin)%matrix, evals_virt)
 
                ! We need to send the copy of MOs to preserve the sign
                CALL cp_fm_create(fm_dummy, fm_ref%matrix_struct)
@@ -599,21 +606,25 @@ CONTAINS
                ! copy active orbitals
                mo_set => active_space_env%mos_active(ispin)
                CALL get_mo_set(mo_set, mo_coeff=fm_target)
+               nel = active_space_env%nelec_active_spinwise(ispin)
+               mo_set(ipsin)%nelectron = nel
+               mo_set(ispin)%n_el_f = REAL(nel, KIND=dp)
                ncol = nactive_orb(ispin)
                DO i = 1, SIZE(active_space_env%active_orbitals, 1)
                   m = active_space_env%active_orbitals(i, ispin)
-                  IF (m > nmo) THEN
-                     CALL cp_fm_to_fm(mo_virt, fm_target, 1, m - nmo, m)
-                     mo_set%eigenvalues(m) = evals_virt(m - nmo)
+                  IF (m > nmo_available) THEN
+                     CALL cp_fm_to_fm(mo_virt, fm_target, 1, m - nmo_available, m)
+                     mo_set%eigenvalues(m) = evals_virt(m - nmo_available)
                      mo_set%occupation_numbers(m) = 0.0
                   ELSE
                      CALL cp_fm_to_fm(fm_ref, fm_target, 1, m, m)
                      mo_set%eigenvalues(m) = eigenvalues(m, ispin)
-                     IF (nspins > 1) THEN
-                        mo_set%occupation_numbers(m) = 1.0
-                     ELSE
-                        mo_set%occupation_numbers(m) = 2.0
-                     END IF
+                     mo_set%occupation_numbers(m) = mos(ispin)%occupation_numbers(m)
+                     ! IF (nspins > 1) THEN
+                     !    mo_set%occupation_numbers(m) = 1.0
+                     ! ELSE
+                     !    mo_set%occupation_numbers(m) = 2.0
+                     ! END IF
                   END IF
                END DO
                ! Release
@@ -2465,7 +2476,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'update_active_space'
 
-      INTEGER                                            :: handle, ispin, nao, nmo, nspins, i, j, nmo_act
+      INTEGER                                            :: handle, ispin, nao, nmo, nspins !, i, j, nmo_act
       LOGICAL                                            :: should_stop
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: p_ref
       TYPE(cp_fm_type)                                   :: lamat, vec

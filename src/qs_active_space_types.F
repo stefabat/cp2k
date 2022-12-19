@@ -73,10 +73,11 @@ MODULE qs_active_space_types
 
    TYPE active_space_type
       INTEGER                       :: nelec_active
+      INTEGER                       :: nelec_inactive
       INTEGER, POINTER, DIMENSION(:, :):: active_orbitals
       INTEGER, POINTER, DIMENSION(:, :):: inactive_orbitals
-      INTEGER                       :: nelec_inactive
       INTEGER, DIMENSION(2)         :: nelec_inactive_spinwise
+      INTEGER, DIMENSION(2)         :: nelec_active_spinwise
       INTEGER, DIMENSION(2)         :: nelec_total
       INTEGER                       :: multiplicity
       INTEGER                       :: nspins
