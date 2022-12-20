@@ -607,8 +607,8 @@ CONTAINS
                mo_set => active_space_env%mos_active(ispin)
                CALL get_mo_set(mo_set, mo_coeff=fm_target)
                nel = active_space_env%nelec_active_spinwise(ispin)
-               mo_set(ipsin)%nelectron = nel
-               mo_set(ispin)%n_el_f = REAL(nel, KIND=dp)
+               mo_set%nelectron = nel
+               mo_set%n_el_f = REAL(nel, KIND=dp)
                ncol = nactive_orb(ispin)
                DO i = 1, SIZE(active_space_env%active_orbitals, 1)
                   m = active_space_env%active_orbitals(i, ispin)

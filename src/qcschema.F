@@ -894,7 +894,7 @@ MODULE qcschema
          CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_bb', &
                                      qcschema_env%wavefunction%scf_eri_mo_bb)
 
-         CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_ab', &
+         CALL h5dwrite_double_simple(group_id, 'scf_eri_mo_ba', &
                                      qcschema_env%wavefunction%scf_eri_mo_ab)
 
       END IF
