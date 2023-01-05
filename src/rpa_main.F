@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -1188,6 +1188,7 @@ CONTAINS
             IF (iter_sc_GW0 .NE. 1) iter_evGW = iter_sc_GW0
          END IF
       ELSE
+         ext_scaling = 0.0_dp
          iter_evGW = 1
          iter_sc_GW0 = 1
       END IF
@@ -1267,7 +1268,7 @@ CONTAINS
 
       ALLOCATE (e_fermi(nspins))
       IF (do_minimax_quad .OR. do_ri_sos_laplace_mp2) THEN
-         do_print = .NOT. do_ic_model .AND. (.NOT. qs_env%mp2_env%ri_rpa_im_time%keep_quad)
+         do_print = .NOT. do_ic_model
          CALL get_minimax_grid(para_env, unit_nr, homo, Eigenval, num_integ_points, do_im_time, &
                                do_ri_sos_laplace_mp2, do_print, &
                                tau_tj, tau_wj, qs_env, do_gw_im_time, &
@@ -1369,8 +1370,6 @@ CONTAINS
 
             IF (unit_nr > 0) WRITE (UNIT=unit_nr, FMT="(/T3,A,T66,i15)") &
                "MEMORY_INFO| Memory cut:", cut_memory
-            IF (unit_nr > 0) WRITE (UNIT=unit_nr, FMT="(T3,A,T66,ES15.2)") &
-               "SPARSITY_INFO| Eps pgf orb for imaginary time:", mp2_env%mp2_gpw%eps_grid
             IF (unit_nr > 0) WRITE (UNIT=unit_nr, FMT="(T3,A,T66,ES15.2)") &
                "SPARSITY_INFO| Eps filter for M virt/occ tensors:", eps_filter
             IF (unit_nr > 0) WRITE (UNIT=unit_nr, FMT="(T3,A,T66,ES15.2)") &
@@ -1514,7 +1513,7 @@ CONTAINS
 
                IF (calc_forces .AND. .NOT. do_im_time) CALL rpa_grad_matrix_operations(mp2_env, rpa_grad, do_ri_sos_laplace_mp2, &
                                                            fm_mat_Q, fm_mat_Q_gemm, dgemm_counter, fm_mat_S, omega, homo, virtual, &
-                                                                                       Eigenval(:, 1, :), tau_wj(jquad))
+                                                                                       Eigenval(:, 1, :), tau_wj(jquad), unit_nr)
             ELSE
                IF (calc_forces .AND. .NOT. do_im_time) CALL rpa_grad_copy_Q(fm_mat_Q(1), rpa_grad)
 
@@ -1533,7 +1532,7 @@ CONTAINS
 
                IF (calc_forces .AND. .NOT. do_im_time) CALL rpa_grad_matrix_operations(mp2_env, rpa_grad, do_ri_sos_laplace_mp2, &
                                                            fm_mat_Q, fm_mat_Q_gemm, dgemm_counter, fm_mat_S, omega, homo, virtual, &
-                                                                                       Eigenval(:, 1, :), wj(jquad))
+                                                                                       Eigenval(:, 1, :), wj(jquad), unit_nr)
             END IF ! do_ri_sos_laplace_mp2
 
             ! save omega and reset the first_cycle flag
@@ -1620,7 +1619,7 @@ CONTAINS
                                              tau_tj, tau_wj, cut_memory, Pspin, Qspin, my_open_shell, &
                                              unit_nr, dbcsr_time, dbcsr_nflop, mp2_env, qs_env)
             END IF
-            CALL calc_post_loop_forces(force_data, qs_env)
+            CALL calc_post_loop_forces(force_data, unit_nr, qs_env)
          END IF !laplace SOS-MP2
 
          IF (calc_forces .AND. do_im_time .AND. .NOT. do_ri_sos_laplace_mp2) THEN
@@ -1635,7 +1634,7 @@ CONTAINS
                                          wj, tau_tj, cut_memory, ispin, my_open_shell, unit_nr, dbcsr_time, &
                                          dbcsr_nflop, mp2_env, qs_env)
             END DO
-            CALL calc_post_loop_forces(force_data, qs_env)
+            CALL calc_post_loop_forces(force_data, unit_nr, qs_env)
          END IF
 
          IF (do_im_time) THEN

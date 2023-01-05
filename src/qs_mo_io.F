@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -31,10 +31,10 @@ MODULE qs_mo_io
                                               open_file
    USE cp_fm_types,                     ONLY: cp_fm_get_info,&
                                               cp_fm_get_submatrix,&
-                                              cp_fm_p_type,&
                                               cp_fm_set_all,&
                                               cp_fm_set_submatrix,&
                                               cp_fm_to_fm,&
+                                              cp_fm_type,&
                                               cp_fm_write_unformatted
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr,&
@@ -59,7 +59,8 @@ MODULE qs_mo_io
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length,&
                                               dp
-   USE message_passing,                 ONLY: mp_bcast
+   USE message_passing,                 ONLY: mp_bcast,&
+                                              mp_comm_type
    USE orbital_pointers,                ONLY: indco,&
                                               nco,&
                                               nso
@@ -231,7 +232,7 @@ CONTAINS
                                       qs_kind_set)
 
       TYPE(mo_set_type), DIMENSION(:), INTENT(IN)        :: mo_array
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: rt_mos
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: rt_mos
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(section_vals_type), POINTER                   :: dft_section
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
@@ -286,8 +287,8 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       INTEGER                                            :: ires
-      TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: rt_mos
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN), &
+         OPTIONAL                                        :: rt_mos
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'write_mo_set_low'
 
@@ -403,7 +404,7 @@ CONTAINS
          END IF
          IF (PRESENT(rt_mos)) THEN
             DO imat = 2*ispin - 1, 2*ispin
-               CALL cp_fm_write_unformatted(rt_mos(imat)%matrix, ires)
+               CALL cp_fm_write_unformatted(rt_mos(imat), ires)
             END DO
          ELSE
             CALL cp_fm_write_unformatted(mo_array(ispin)%mo_coeff, ires)
@@ -505,10 +506,11 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_mo_set_from_restart'
 
       CHARACTER(LEN=default_path_length)                 :: file_name
-      INTEGER                                            :: group, handle, ispin, natom, nspin, &
+      INTEGER                                            :: handle, ispin, natom, nspin, &
                                                             restart_unit, source
       LOGICAL                                            :: exist, my_cdft
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mp_comm_type)                                 :: group
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -583,7 +585,7 @@ CONTAINS
                                        particle_set, para_env, id_nr, multiplicity, dft_section)
 
       TYPE(mo_set_type), DIMENSION(:), INTENT(INOUT)     :: mo_array
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: rt_mos
+      TYPE(cp_fm_type), DIMENSION(:), POINTER            :: rt_mos
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
@@ -594,10 +596,11 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'read_rt_mos_from_restart'
 
       CHARACTER(LEN=default_path_length)                 :: file_name
-      INTEGER                                            :: group, handle, ispin, natom, nspin, &
+      INTEGER                                            :: handle, ispin, natom, nspin, &
                                                             restart_unit, source
       LOGICAL                                            :: exist
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mp_comm_type)                                 :: group
 
       CALL timeset(routineN, handle)
       logger => cp_get_default_logger()
@@ -665,11 +668,10 @@ CONTAINS
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       INTEGER, INTENT(IN)                                :: natom, rst_unit
       INTEGER, INTENT(in), OPTIONAL                      :: multiplicity
-      TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: rt_mos
+      TYPE(cp_fm_type), DIMENSION(:), OPTIONAL, POINTER  :: rt_mos
       LOGICAL, INTENT(OUT), OPTIONAL                     :: natom_mismatch
 
-      INTEGER :: group, homo, homo_read, i, iatom, ikind, imat, irow, iset, iset_read, ishell, &
+      INTEGER :: homo, homo_read, i, iatom, ikind, imat, irow, iset, iset_read, ishell, &
          ishell_read, iso, ispin, lfomo_read, lmax, lshell, my_mult, nao, nao_read, natom_read, &
          nelectron, nelectron_read, nmo, nmo_read, nnshell, nset, nset_max, nshell_max, nspin, &
          nspin_read, offset_read, source
@@ -681,6 +683,7 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: vecbuffer, vecbuffer_read
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
+      TYPE(mp_comm_type)                                 :: group
       TYPE(qs_dftb_atom_type), POINTER                   :: dftb_parameter
 
       logger => cp_get_default_logger()
@@ -824,7 +827,7 @@ CONTAINS
                      vecbuffer(1, :) = 0.0_dp
                   END IF
                   CALL mp_bcast(vecbuffer, source, group)
-                  CALL cp_fm_set_submatrix(rt_mos(imat)%matrix, &
+                  CALL cp_fm_set_submatrix(rt_mos(imat), &
                                            vecbuffer, 1, i, nao, 1, transpose=.TRUE.)
                END DO
             END DO
@@ -968,6 +971,9 @@ CONTAINS
 !> \param final_mos ...
 !> \param spin ...
 !> \param solver_method ...
+!> \param rtp ...
+!> \param cpart ...
+!> \param sim_step ...
 !> \date    15.05.2001
 !> \par History:
 !>       - Optionally print Cartesian MOs (20.04.2005, MK)
@@ -980,7 +986,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE write_mo_set_to_output_unit(mo_set, atomic_kind_set, qs_kind_set, particle_set, &
                                           dft_section, before, kpoint, final_mos, spin, &
-                                          solver_method)
+                                          solver_method, rtp, cpart, sim_step)
 
       TYPE(mo_set_type), INTENT(IN)                      :: mo_set
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
@@ -991,17 +997,21 @@ CONTAINS
       LOGICAL, INTENT(IN), OPTIONAL                      :: final_mos
       CHARACTER(LEN=*), INTENT(IN), OPTIONAL             :: spin
       CHARACTER(LEN=2), INTENT(IN), OPTIONAL             :: solver_method
+      LOGICAL, INTENT(IN), OPTIONAL                      :: rtp
+      INTEGER, INTENT(IN), OPTIONAL                      :: cpart, sim_step
 
       CHARACTER(LEN=12)                                  :: symbol
       CHARACTER(LEN=12), DIMENSION(:), POINTER           :: bcgf_symbol
       CHARACTER(LEN=14)                                  :: fmtstr5
-      CHARACTER(LEN=15)                                  :: energy_str, orbital_str, vector_str
+      CHARACTER(LEN=15)                                  :: energy_str, orbital_str, step_string
       CHARACTER(LEN=2)                                   :: element_symbol, my_solver_method
       CHARACTER(LEN=2*default_string_length)             :: name
+      CHARACTER(LEN=21)                                  :: vector_str
       CHARACTER(LEN=22)                                  :: fmtstr4
       CHARACTER(LEN=24)                                  :: fmtstr2
       CHARACTER(LEN=25)                                  :: fmtstr1
       CHARACTER(LEN=29)                                  :: fmtstr6
+      CHARACTER(LEN=4)                                   :: reim
       CHARACTER(LEN=40)                                  :: fmtstr3
       CHARACTER(LEN=6), DIMENSION(:), POINTER            :: bsgf_symbol
       INTEGER :: after, first_mo, from, iatom, icgf, ico, icol, ikind, imo, irow, iset, isgf, &
@@ -1009,9 +1019,10 @@ CONTAINS
          nrow_global, nset, nsgf, right, scf_step, to, width
       INTEGER, DIMENSION(:), POINTER                     :: mo_index_range, nshell
       INTEGER, DIMENSION(:, :), POINTER                  :: l
-      LOGICAL                                            :: ionode, my_final, print_cartesian, &
-                                                            print_eigvals, print_eigvecs, &
-                                                            print_occup, should_output
+      LOGICAL                                            :: ionode, my_final, my_rtp, &
+                                                            print_cartesian, print_eigvals, &
+                                                            print_eigvecs, print_occup, &
+                                                            should_output
       REAL(KIND=dp)                                      :: gap
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: cmatrix, smatrix
       TYPE(cp_logger_type), POINTER                      :: logger
@@ -1041,12 +1052,42 @@ CONTAINS
          my_final = .FALSE.
       END IF
 
-      should_output = BTEST(cp_print_key_should_output(logger%iter_info, dft_section, &
-                                                       "PRINT%MO"), cp_p_file) .OR. my_final
+      ! complex MOS for RTP, no eigenvalues
+      my_rtp = .FALSE.
+      IF (PRESENT(rtp)) THEN
+         my_rtp = rtp
+         ! print the first time step if MO print required
+         should_output = BTEST(cp_print_key_should_output(logger%iter_info, dft_section, &
+                                                          "PRINT%MO"), cp_p_file) &
+                         .OR. (sim_step == 1)
+      ELSE
+         should_output = BTEST(cp_print_key_should_output(logger%iter_info, dft_section, &
+                                                          "PRINT%MO"), cp_p_file) .OR. my_final
+      END IF
 
       IF ((.NOT. should_output) .OR. (.NOT. (print_eigvals .OR. print_eigvecs .OR. print_occup))) RETURN
 
-      scf_step = MAX(0, logger%iter_info%iteration(logger%iter_info%n_rlevel) - 1)
+      IF (my_rtp) THEN
+         CPASSERT(PRESENT(sim_step))
+         CPASSERT(PRESENT(cpart))
+         scf_step = sim_step
+         IF (cpart == 0) THEN
+            reim = "IMAG"
+         ELSE
+            reim = "REAL"
+         END IF
+         print_eigvals = .FALSE.
+      ELSE
+         scf_step = MAX(0, logger%iter_info%iteration(logger%iter_info%n_rlevel) - 1)
+      END IF
+
+      IF (.NOT. my_final) THEN
+         IF (.NOT. my_rtp) THEN
+            step_string = " AFTER SCF STEP"
+         ELSE
+            step_string = " AFTER RTP STEP"
+         END IF
+      END IF
 
       IF (PRESENT(solver_method)) THEN
          my_solver_method = solver_method
@@ -1105,6 +1146,11 @@ CONTAINS
          ELSE
             energy_str = "ENERGIES"
             vector_str = "COEFFICIENTS"
+         END IF
+
+         IF (my_rtp) THEN
+            energy_str = "ZEROS"
+            vector_str = TRIM(reim)//" RTP COEFFICIENTS"
          END IF
 
          IF (print_eigvecs) THEN
@@ -1168,13 +1214,13 @@ CONTAINS
                    TRIM(orbital_str)//" "//TRIM(vector_str)
 
             IF (.NOT. my_final) &
-               WRITE (UNIT=name, FMT="(A,1X,I0)") TRIM(name)//" AFTER SCF STEP", scf_step
+               WRITE (UNIT=name, FMT="(A,1X,I0)") TRIM(name)//step_string, scf_step
 
          ELSE IF (print_occup .OR. print_eigvals) THEN
             name = TRIM(energy_str)//" AND OCCUPATION NUMBERS"
 
             IF (.NOT. my_final) &
-               WRITE (UNIT=name, FMT="(A,1X,I0)") TRIM(name)//" AFTER SCF STEP", scf_step
+               WRITE (UNIT=name, FMT="(A,1X,I0)") TRIM(name)//step_string, scf_step
          END IF ! print_eigvecs
 
          ! Print headline
@@ -1358,12 +1404,14 @@ CONTAINS
 
          END IF ! print_eigvecs
 
-         fmtstr6 = "(A,T18,F17.  ,A,T41,F17.  ,A)"
-         WRITE (UNIT=fmtstr6(12:13), FMT="(I2)") after
-         WRITE (UNIT=fmtstr6(25:26), FMT="(I2)") after
-         WRITE (UNIT=iw, FMT=fmtstr6) &
-            " MO| E(Fermi):", mo_set%mu, " a.u.", mo_set%mu*evolt, " eV"
-         IF ((mo_set%homo > 0)) THEN
+         IF (.NOT. my_rtp) THEN
+            fmtstr6 = "(A,T18,F17.  ,A,T41,F17.  ,A)"
+            WRITE (UNIT=fmtstr6(12:13), FMT="(I2)") after
+            WRITE (UNIT=fmtstr6(25:26), FMT="(I2)") after
+            WRITE (UNIT=iw, FMT=fmtstr6) &
+               " MO| E(Fermi):", mo_set%mu, " a.u.", mo_set%mu*evolt, " eV"
+         END IF
+         IF ((mo_set%homo > 0) .AND. .NOT. my_rtp) THEN
             IF ((mo_set%occupation_numbers(mo_set%homo) == mo_set%maxocc) .AND. (last_mo > mo_set%homo)) THEN
                gap = mo_set%eigenvalues(mo_set%homo + 1) - &
                      mo_set%eigenvalues(mo_set%homo)

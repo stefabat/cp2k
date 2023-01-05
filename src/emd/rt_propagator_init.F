@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -23,7 +23,6 @@ MODULE rt_propagator_init
    USE cp_fm_diag,                      ONLY: cp_fm_syevd
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
-                                              cp_fm_p_type,&
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
@@ -81,7 +80,7 @@ CONTAINS
 
       INTEGER                                            :: i, imat, unit_nr
       REAL(KIND=dp)                                      :: dt, prefac
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_next, mos_old
+      TYPE(cp_fm_type), DIMENSION(:), POINTER            :: mos_new, mos_next, mos_old
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H_new, exp_H_old, matrix_ks, &
                                                             matrix_ks_im, propagator_matrix, &
@@ -147,7 +146,7 @@ CONTAINS
             CALL propagate_arnoldi(rtp, rtp_control)
             CALL get_rtp(rtp=rtp, mos_new=mos_new, mos_next=mos_next)
             DO imat = 1, SIZE(mos_new)
-               CALL cp_fm_to_fm(mos_new(imat)%matrix, mos_next(imat)%matrix)
+               CALL cp_fm_to_fm(mos_new(imat), mos_next(imat))
             END DO
          ELSEIF (rtp_control%mat_exp == do_bch) THEN
          ELSE
@@ -431,7 +430,7 @@ CONTAINS
          CALL cp_fm_column_scale(mos(ispin)%mo_coeff, mos(ispin)%occupation_numbers/alpha)
          CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=rho_old(re)%matrix, &
                                     matrix_v=mos(ispin)%mo_coeff, ncol=ncol, alpha=alpha, keep_sparsity=.FALSE.)
-         CALL dbcsr_filter(rho_old(re)%matrix, eps=rtp%filter_eps)
+         CALL dbcsr_filter(rho_old(re)%matrix, rtp%filter_eps)
          CALL dbcsr_copy(rho_new(re)%matrix, rho_old(re)%matrix)
       END DO
 

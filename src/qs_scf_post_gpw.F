@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -210,8 +210,9 @@ MODULE qs_scf_post_gpw
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qs_scf_post_gpw'
    PUBLIC :: scf_post_calculation_gpw, &
              qs_scf_post_moments, &
-             write_available_results, &
+             write_mo_dependent_results, &
              write_mo_free_results
+
    PUBLIC :: make_lumo_gpw
 
 ! **************************************************************************************************

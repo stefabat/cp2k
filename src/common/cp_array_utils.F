@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -64,7 +64,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_1d_${nametype1}$_p_type
-         ${type1}$, dimension(:), pointer :: array
+         ${type1}$, dimension(:), pointer :: array => NULL()
       end type cp_1d_${nametype1}$_p_type
 
 ! **************************************************************************************************
@@ -74,7 +74,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_2d_${nametype1}$_p_type
-         ${type1}$, dimension(:, :), pointer :: array
+         ${type1}$, dimension(:, :), pointer :: array => NULL()
       end type cp_2d_${nametype1}$_p_type
 
 ! **************************************************************************************************
@@ -84,7 +84,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_3d_${nametype1}$_p_type
-         ${type1}$, dimension(:, :, :), pointer :: array
+         ${type1}$, dimension(:, :, :), pointer :: array => NULL()
       end type cp_3d_${nametype1}$_p_type
 
 ! **************************************************************************************************
@@ -94,7 +94,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_1d_${nametype1}$_cp_type
-         ${type1}$, dimension(:), contiguous, pointer :: array
+         ${type1}$, dimension(:), contiguous, pointer :: array => NULL()
       end type cp_1d_${nametype1}$_cp_type
 
 ! **************************************************************************************************
@@ -104,7 +104,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_2d_${nametype1}$_cp_type
-         ${type1}$, dimension(:, :), contiguous, pointer :: array
+         ${type1}$, dimension(:, :), contiguous, pointer :: array => NULL()
       end type cp_2d_${nametype1}$_cp_type
 
 ! **************************************************************************************************
@@ -114,7 +114,7 @@ MODULE cp_array_utils
 !> \author fawzi
 ! **************************************************************************************************
       type cp_3d_${nametype1}$_cp_type
-         ${type1}$, dimension(:, :, :), contiguous, pointer :: array
+         ${type1}$, dimension(:, :, :), contiguous, pointer :: array => NULL()
       end type cp_3d_${nametype1}$_cp_type
 
    #:endfor

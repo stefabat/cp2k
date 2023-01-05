@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -77,7 +77,8 @@ MODULE xas_tdp_methods
    USE machine,                         ONLY: m_flush
    USE mathlib,                         ONLY: get_diag
    USE memory_utilities,                ONLY: reallocate
-   USE message_passing,                 ONLY: mp_bcast
+   USE message_passing,                 ONLY: mp_bcast,&
+                                              mp_comm_type
    USE parallel_gemm_api,               ONLY: parallel_gemm
    USE parallel_rng_types,              ONLY: UNIFORM,&
                                               rng_stream_type
@@ -2790,10 +2791,9 @@ CONTAINS
          !Storing results
          CALL cp_fm_struct_create(lumo_struct, para_env=para_env, context=blacs_env, &
                                   nrow_global=nao, ncol_global=nlumo(ispin))
-         ALLOCATE (xas_tdp_env%lumo_evecs(ispin)%matrix)
-         CALL cp_fm_create(xas_tdp_env%lumo_evecs(ispin)%matrix, lumo_struct)
+         CALL cp_fm_create(xas_tdp_env%lumo_evecs(ispin), lumo_struct)
 
-         CALL cp_fm_to_fm_submat(evecs, xas_tdp_env%lumo_evecs(ispin)%matrix, nrow=nao, &
+         CALL cp_fm_to_fm_submat(evecs, xas_tdp_env%lumo_evecs(ispin), nrow=nao, &
                                  ncol=nlumo(ispin), s_firstrow=1, s_firstcol=nocc(ispin) + 1, &
                                  t_firstrow=1, t_firstcol=1)
 
@@ -3337,7 +3337,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'read_donor_state_restart'
 
-      INTEGER                                            :: group, handle, ispin, nao, nex, nspins, &
+      INTEGER                                            :: handle, ispin, nao, nex, nspins, &
                                                             output_unit, read_params(7), rst_unit, &
                                                             source
       INTEGER, DIMENSION(:, :), POINTER                  :: mo_indices
@@ -3348,6 +3348,7 @@ CONTAINS
       TYPE(cp_fm_type), POINTER                          :: lr_coeffs
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
+      TYPE(mp_comm_type)                                 :: group
 
       NULLIFY (lr_evals, lr_coeffs, para_env, fm_struct, blacs_env, mos)
 

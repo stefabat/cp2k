@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -106,6 +106,7 @@ MODULE qs_tddfpt2_types
       !> phase of occupied MOs; +1.0 -- positive, -1.0 -- negative;
       !> it is mainly needed to make the restart file transferable
       REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: phases_occ
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: phases_virt
    END TYPE tddfpt_ground_state_mos
 
 ! **************************************************************************************************

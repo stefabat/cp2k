@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -1139,8 +1139,11 @@ MODULE input_constants
                                                do_cosma = 2
 
    ! Dispersion DFTB
-   INTEGER, PARAMETER, PUBLIC               :: dispersion_uff = 100, &
-                                               dispersion_d3 = 200
+   INTEGER, PARAMETER, PUBLIC               :: dispersion_none = 0, &
+                                               dispersion_uff = 100, &
+                                               dispersion_d3 = 200, &
+                                               dispersion_d3bj = 210, &
+                                               dispersion_d2 = 300
 
    ! Transport section
    INTEGER, PARAMETER, PUBLIC               :: transport_localscf = 1, &

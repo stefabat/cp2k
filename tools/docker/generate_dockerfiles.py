@@ -62,7 +62,13 @@ def main() -> None:
         f.write(regtest("ssmp"))
 
     with OutputFile("Dockerfile.test_arm64-psmp", args.check) as f:
-        f.write(toolchain_full(base_image="arm64v8/ubuntu:22.04", with_libxsmm="no"))
+        f.write(
+            toolchain_full(
+                base_image="arm64v8/ubuntu:22.04",
+                with_libxsmm="no",
+                with_libtorch="no",
+            )
+        )
         f.write(regtest("psmp"))
 
     with OutputFile(f"Dockerfile.test_performance", args.check) as f:
@@ -210,7 +216,8 @@ def manual() -> str:
 COPY ./tools/manual ./tools/manual
 COPY ./tools/input_editing ./tools/input_editing
 COPY ./tools/docker/scripts/test_manual.sh .
-RUN ./test_manual.sh 2>&1 | tee report.log
+ARG ADD_EDIT_LINKS=yes
+RUN ./test_manual.sh "${{ADD_EDIT_LINKS}}" 2>&1 | tee report.log
 """
         + print_cached_report()
     )
@@ -559,7 +566,7 @@ RUN apt-get update -qq && apt-get install -qq --no-install-recommends \
 # ======================================================================================
 def toolchain_hip_cuda(gpu_ver: str) -> str:
     return rf"""
-FROM nvidia/cuda:11.3.1-devel-ubuntu20.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 # Setup CUDA environment.
 ENV CUDA_PATH /usr/local/cuda
@@ -568,6 +575,10 @@ ENV HIP_PLATFORM nvidia
 ENV ROCM_VER 4.5.2
 ENV HIP_DIR /opt/HIP-rocm-4.5.2
 ENV HIPAMD_DIR /opt/hipamd-rocm-4.5.2
+
+# Disable JIT cache as there seems to be an issue with file locking on overlayfs.
+# See also https://github.com/cp2k/cp2k/pull/2337
+ENV CUDA_CACHE_DISABLE 1
 
 RUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
     && apt-get update -qq && apt-get install -qq --no-install-recommends \
@@ -662,7 +673,7 @@ RUN hipconfig
 # ======================================================================================
 def toolchain_hip_rocm(gpu_ver: str) -> str:
     return rf"""
-FROM rocm/dev-ubuntu-20.04:4.5.2-complete
+FROM rocm/dev-ubuntu-22.04:5.3.2-complete
 
 # Install some Ubuntu packages.
 RUN apt-get update -qq && apt-get install -qq --no-install-recommends \

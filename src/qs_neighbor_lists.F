@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -62,7 +62,8 @@ MODULE qs_neighbor_lists
                                               dp,&
                                               int_8
    USE kpoint_types,                    ONLY: kpoint_type
-   USE message_passing,                 ONLY: mp_max,&
+   USE message_passing,                 ONLY: mp_comm_type,&
+                                              mp_max,&
                                               mp_sum
    USE molecule_types,                  ONLY: molecule_type
    USE particle_types,                  ONLY: particle_type
@@ -833,7 +834,7 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, dispersion_env=dispersion_env)
       sab_vdw => dispersion_env%sab_vdw
       sab_cn => dispersion_env%sab_cn
-      IF (dispersion_env%type == xc_vdw_fun_pairpot) THEN
+      IF (dispersion_env%type == xc_vdw_fun_pairpot .OR. xtb) THEN
          c_radius(:) = dispersion_env%rc_disp
          default_present = .TRUE. !include all atoms in vdW (even without basis)
          CALL pair_radius_setup(default_present, default_present, c_radius, c_radius, pair_radius)
@@ -841,9 +842,10 @@ CONTAINS
                                    subcells=subcells, operator_type="PP", nlname="sab_vdw")
          dispersion_env%sab_vdw => sab_vdw
 
-         IF (dispersion_env%pp_type == vdw_pairpot_dftd3 .OR. &
+         IF (xtb .OR. dispersion_env%pp_type == vdw_pairpot_dftd3 .OR. &
              dispersion_env%pp_type == vdw_pairpot_dftd3bj) THEN
             ! Build the neighbor lists for coordination numbers as needed by the DFT-D3 method
+            ! This is also needed for the xTB Hamiltonian
             DO ikind = 1, nkind
                CALL get_atomic_kind(atomic_kind_set(ikind), z=zat)
                c_radius(ikind) = 4._dp*ptable(zat)%covalent_radius*bohr
@@ -1633,12 +1635,13 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'write_neighbor_distribution'
       LOGICAL, PARAMETER                                 :: full_output = .FALSE.
 
-      INTEGER                                            :: group, handle, ikind, inode, ipe, jkind, &
-                                                            mype, n, nkind, nnode, npe
+      INTEGER                                            :: handle, ikind, inode, ipe, jkind, mype, &
+                                                            n, nkind, nnode, npe
       INTEGER(int_8)                                     :: nblock_max, nblock_sum, nelement_max, &
                                                             nelement_sum, tmp(2)
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: nblock, nelement, nnsgf
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis_set
+      TYPE(mp_comm_type)                                 :: group
       TYPE(neighbor_list_iterator_p_type), &
          DIMENSION(:), POINTER                           :: nl_iterator
 

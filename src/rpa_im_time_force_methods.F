@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !   CP2K: A general program to perform molecular dynamics simulations                              !
-!   Copyright 2000-2022 CP2K developers group <https://cp2k.org>                                   !
+!   Copyright 2000-2023 CP2K developers group <https://cp2k.org>                                   !
 !                                                                                                  !
 !   SPDX-License-Identifier: GPL-2.0-or-later                                                      !
 !--------------------------------------------------------------------------------------------------!
@@ -41,7 +41,6 @@ MODULE rpa_im_time_force_methods
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_type
-   USE cp_log_handling,                 ONLY: cp_logger_get_default_io_unit
    USE cp_para_env,                     ONLY: cp_para_env_release,&
                                               cp_para_env_split
    USE cp_para_types,                   ONLY: cp_para_env_type
@@ -88,6 +87,7 @@ MODULE rpa_im_time_force_methods
                                               m_walltime
    USE mathconstants,                   ONLY: fourpi
    USE message_passing,                 ONLY: mp_cart_create,&
+                                              mp_comm_type,&
                                               mp_sum,&
                                               mp_sync
    USE mp2_eri,                         ONLY: integrate_set_2c
@@ -202,8 +202,8 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'init_im_time_forces'
 
       INTEGER                                            :: handle, i_mem, i_xyz, ibasis, ispin, &
-                                                            mp_comm_t3c, n_dependent, n_mem, &
-                                                            n_rep, natom, nkind, nspins
+                                                            n_dependent, n_mem, n_rep, natom, &
+                                                            nkind, nspins
       INTEGER(int_8)                                     :: nze, nze_tot
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: dist1, dist2, dist_AO_1, dist_AO_2, &
                                                             dist_RI, dummy_end, dummy_start, &
@@ -233,6 +233,7 @@ CONTAINS
          DIMENSION(:), TARGET                            :: basis_set_ao, basis_set_ri_aux
       TYPE(gto_basis_set_type), POINTER                  :: orb_basis, ri_basis
       TYPE(libint_potential_type)                        :: identity_pot
+      TYPE(mp_comm_type)                                 :: mp_comm_t3c
       TYPE(neighbor_list_3c_type)                        :: nl_3c
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: nl_2c
@@ -2029,6 +2030,7 @@ CONTAINS
 
             END DO !k_mem
          END DO !j_mem
+
          CALL dbt_copy(t_3c_8, t_3c_help_1, move_data=.TRUE.)
 
          pref = 1.0_dp*fac
@@ -2098,17 +2100,18 @@ CONTAINS
 !>        terms collected during the said loop. This inludes the z-vector equation and its reponse
 !>        forces, as well as the force coming from the trace with the derivative of the KS matrix
 !> \param force_data ...
+!> \param unit_nr ...
 !> \param qs_env ...
 ! **************************************************************************************************
-   SUBROUTINE calc_post_loop_forces(force_data, qs_env)
+   SUBROUTINE calc_post_loop_forces(force_data, unit_nr, qs_env)
 
       TYPE(im_time_force_type), INTENT(INOUT)            :: force_data
+      INTEGER, INTENT(IN)                                :: unit_nr
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
       CHARACTER(len=*), PARAMETER :: routineN = 'calc_post_loop_forces'
 
-      INTEGER                                            :: handle, ispin, nao, nao_aux, nocc, &
-                                                            nspins, unit_nr
+      INTEGER                                            :: handle, ispin, nao, nao_aux, nocc, nspins
       LOGICAL                                            :: do_exx
       REAL(dp)                                           :: focc
       TYPE(admm_type), POINTER                           :: admm_env
@@ -2151,7 +2154,6 @@ CONTAINS
 
       CALL set_qs_env(qs_env, linres_control=linres_control)
 
-      unit_nr = cp_logger_get_default_io_unit()
       IF (unit_nr > 0) THEN
          WRITE (unit_nr, *)
          WRITE (unit_nr, '(T3,A)') 'MP2_CPHF| Iterative solution of Z-Vector equations'
@@ -2660,7 +2662,7 @@ CONTAINS
          END DO
       END DO
 
-      CALL dbcsr_distribution_new(dbcsr_dist, group=para_env%group, pgrid=pgrid, row_dist=row_dist, col_dist=col_dist)
+      CALL dbcsr_distribution_new(dbcsr_dist, group=para_env%group%get_handle(), pgrid=pgrid, row_dist=row_dist, col_dist=col_dist)
 
       !The temporary DBCSR integrals and derivatives matrices in this flat distribution
       CALL dbcsr_create(tmp_G_PQ, template=G_PQ, matrix_type=dbcsr_type_no_symmetry, dist=dbcsr_dist)
