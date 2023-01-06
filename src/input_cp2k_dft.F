@@ -506,6 +506,10 @@ CONTAINS
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
+      CALL create_active_space_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
    END SUBROUTINE create_dft_section
 
 ! **************************************************************************************************
@@ -1074,9 +1078,9 @@ CONTAINS
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
-      CALL create_active_space_section(subsection)
-      CALL section_add_subsection(section, subsection)
-      CALL section_release(subsection)
+      ! CALL create_active_space_section(subsection)
+      ! CALL section_add_subsection(section, subsection)
+      ! CALL section_release(subsection)
 
       CALL section_create(subsection, __LOCATION__, name="GAPW", &
                           description="Controls the printing of some gapw related information (debug).", &

@@ -188,7 +188,7 @@ CONTAINS
 !> \param logger ...
 !> \param qs_env ...
 ! **************************************************************************************************
-   SUBROUTINE active_space_main(input, logger, qs_env)
+   SUBROUTINE active_space_main(qs_env)
       TYPE(section_vals_type), POINTER                   :: input
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(qs_environment_type), POINTER                 :: qs_env
@@ -239,11 +239,13 @@ CONTAINS
 
       !--------------------------------------------------------------------------------------------!
 
-      as_input => section_vals_get_subs_vals(input, "DFT%PRINT%ACTIVE_SPACE")
+      CALL get_qs_env(qs_env, input=input)
+      as_input => section_vals_get_subs_vals(input, "DFT%ACTIVE_SPACE")
       CALL section_vals_get(as_input, explicit=explicit)
       IF (.NOT. explicit) RETURN
       CALL timeset(routineN, handle)
 
+      logger => cp_get_default_logger()
       iw = cp_logger_get_default_io_unit(logger)
 
       IF (iw > 0) THEN
