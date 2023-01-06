@@ -28,6 +28,7 @@ MODULE qcschema
    USE kinds,                          ONLY: dp, default_string_length, &
                                              default_path_length, int_8, int_4
    USE mp2_types,                      ONLY: mp2_type
+   USE message_passing,                ONLY: mp_comm_type
    USE particle_types,                 ONLY: particle_type
    USE periodic_table,                 ONLY: get_ptable_info
    USE qs_active_space_types,          ONLY: active_space_type, csr_idx_to_combined, &
@@ -1103,6 +1104,7 @@ MODULE qcschema
                                                             nindex, irptr, nmo_inactive
       INTEGER, DIMENSION(2)                              :: irange
       REAL(KIND=dp)                                      :: erival
+      TYPE(mp_comm_type)                                 :: mp_group
 
       nmo_active = SIZE(active_orbitals, 1)
       nmo_total = eri_env%norb
@@ -1116,7 +1118,8 @@ MODULE qcschema
          eri => eri_env%eri(3)%csr_mat
       end if
 
-      irange = get_irange_csr(nindex, eri%mp_group)
+      CALL mp_group%set_handle(eri%mp_group)
+      irange = get_irange_csr(nindex, mp_group)
 
       array = 0.0_dp
 
