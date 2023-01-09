@@ -1539,13 +1539,13 @@ CONTAINS
                   CPABORT("Not available")
                ELSEIF (eri_env%method == eri_method_full_gpw) THEN
                   DO isp2 = isp1, nspins
-                     CALL get_mo_set(mo_set=mos(isp1), nmo=nmo2)
+                     CALL get_mo_set(mo_set=mos(isp2), nmo=nmo2)
                      nx = (nmo2*(nmo2 + 1))/2
                      ALLOCATE (eri(nx), eri_index(nx))
                      icount2 = 0
                      iwbs = 1
                      IF (isp1 == isp2) iwbs = i1
-                     isp = (isp1 - 1)*isp2 - ((isp1 - 1)*(isp1 - 2))/2 + (isp2 - isp1 + 1)
+                     isp = (isp1 - 1)*isp2 + (isp2 - isp1 + 1)
                      DO i3 = iwbs, SIZE(orbitals, 1)
                         iwb1 = orbitals(i3, isp2)
                         IF (eri_env%eri_gpw%store_wfn) THEN

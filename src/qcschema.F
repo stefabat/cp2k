@@ -1143,18 +1143,20 @@ MODULE qcschema
                   jikl = j + (i - 1)*nmo_active + (k - 1)*nmo_active**2 + (l - 1)*nmo_active**3
                   ijlk = i + (j - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
                   jilk = j + (i - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
-                  klij = k + (l - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
-                  lkij = l + (k - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
-                  klji = k + (l - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
-                  lkji = l + (k - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
                   array(ijkl) = erival
                   array(jikl) = erival
                   array(ijlk) = erival
                   array(jilk) = erival
-                  array(klij) = erival
-                  array(lkij) = erival
-                  array(klji) = erival
-                  array(lkji) = erival
+                  IF (spin1 == spin2) THEN
+                     klij = k + (l - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
+                     lkij = l + (k - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
+                     klji = k + (l - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
+                     lkji = l + (k - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
+                     array(klij) = erival
+                     array(lkij) = erival
+                     array(klji) = erival
+                     array(lkji) = erival
+                  END IF
                END DO
             END IF
          END DO
