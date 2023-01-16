@@ -73,32 +73,33 @@ MODULE qs_active_space_types
    END TYPE eri_type_eri_element_func
 
    TYPE active_space_type
-      INTEGER                       :: nelec_active
-      INTEGER                       :: nelec_inactive
-      INTEGER, POINTER, DIMENSION(:, :):: active_orbitals
-      INTEGER, POINTER, DIMENSION(:, :):: inactive_orbitals
-      INTEGER, DIMENSION(2)         :: nelec_inactive_spinwise
-      INTEGER, DIMENSION(2)         :: nelec_active_spinwise
-      INTEGER, DIMENSION(2)         :: nelec_total
-      INTEGER                       :: multiplicity
-      INTEGER                       :: nspins
-      LOGICAL                       :: molecule
-      INTEGER                       :: model
-      REAL(KIND=dp)                 :: energy_total
-      REAL(KIND=dp)                 :: energy_ref
-      REAL(KIND=dp)                 :: energy_inactive
-      REAL(KIND=dp)                 :: energy_active
-      LOGICAL                       :: read_p_act
-      CHARACTER(LEN=default_path_length)                 :: p_act_filename
-      TYPE(mo_set_type), DIMENSION(:), POINTER  :: mos_active
-      TYPE(mo_set_type), DIMENSION(:), POINTER  :: mos_inactive
-      TYPE(eri_type)                :: eri
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: p_active
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: ks_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: vxc_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: h_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: fock_sub
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER:: pmat_inactive
+      INTEGER                             :: nelec_active
+      INTEGER                             :: nelec_inactive
+      INTEGER, POINTER, DIMENSION(:, :)   :: active_orbitals
+      INTEGER, POINTER, DIMENSION(:, :)   :: inactive_orbitals
+      INTEGER, DIMENSION(2)               :: nelec_inactive_spinwise
+      INTEGER, DIMENSION(2)               :: nelec_active_spinwise
+      INTEGER, DIMENSION(2)               :: nelec_total
+      INTEGER                             :: multiplicity
+      INTEGER                             :: nspins
+      LOGICAL                             :: molecule
+      INTEGER                             :: model
+      REAL(KIND=dp)                       :: energy_total
+      REAL(KIND=dp)                       :: energy_ref
+      REAL(KIND=dp)                       :: energy_inactive
+      REAL(KIND=dp)                       :: energy_active
+      LOGICAL                             :: read_p_act
+      CHARACTER(LEN=default_path_length)  :: p_act_filename
+
+      TYPE(eri_type)                               :: eri
+      TYPE(mo_set_type), DIMENSION(:), POINTER     :: mos_active
+      TYPE(mo_set_type), DIMENSION(:), POINTER     :: mos_inactive
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: p_active
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: ks_sub
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: vxc_sub
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: h_sub
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: fock_sub
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER    :: pmat_inactive
    END TYPE active_space_type
 
    ABSTRACT INTERFACE

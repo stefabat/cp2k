@@ -24,6 +24,7 @@ MODULE qs_active_space_methods
    USE cp_dbcsr_operations,             ONLY: cp_dbcsr_plus_fm_fm_t,&
                                               cp_dbcsr_sm_fm_multiply,&
                                               dbcsr_allocate_matrix_set
+   USE cp_dbcsr_output,                 ONLY: write_fm_with_basis_info, cp_dbcsr_write_sparse_matrix
    USE cp_external_control,             ONLY: external_control
    USE cp_files,                        ONLY: close_file,&
                                               open_file
@@ -1143,7 +1144,9 @@ CONTAINS
       !IF (active_space_env%read_p_act) CALL read_active_density(active_space_env, para_env)
 
       ! calculate one-electron operators in the subspace
-      CALL update_active_space(qs_env, active_space_env, as_input)
+      ! CALL update_active_space(qs_env, active_space_env, as_input)
+
+      CALL dft_embedding(qs_env, active_space_env, as_input)
 
       ! Output a FCIDUMP file
       ! CALL fcidump(active_space_env, as_input)
@@ -2487,7 +2490,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'update_active_space'
 
-      INTEGER                                            :: handle, ispin, nao, nmo, nspins !, i, j, nmo_act
+      INTEGER                                            :: handle, ispin, nao, nmo, nspins!, iw
       LOGICAL                                            :: should_stop
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: p_ref
       TYPE(cp_fm_type)                                   :: lamat, vec
@@ -2500,9 +2503,11 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(qcschema_type)                                :: qcschema_env
       ! TYPE(cp_logger_type), POINTER                      :: logger
-      ! CHARACTER(LEN=default_path_length)                 :: filename
 
       CALL timeset(routineN, handle)
+
+      ! logger => cp_get_default_logger()
+      ! iw = cp_logger_get_default_io_unit(logger)
 
       ! density matrix
       CALL get_qs_env(qs_env, rho=rho)
@@ -2630,6 +2635,257 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE update_active_space
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param active_space_env ...
+!> \param as_input ...
+! **************************************************************************************************
+   SUBROUTINE dft_embedding(qs_env, active_space_env, as_input)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(active_space_type), POINTER                   :: active_space_env
+      TYPE(section_vals_type), POINTER                   :: as_input
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'dft_embedding'
+
+      INTEGER                                            :: handle, iter, max_iter, output_unit
+      REAL(KIND=dp)                                      :: energy_old, energy_new, delta_E, eps_embedding, alpha
+      REAL(KIND=dp)                                      :: t1, t2
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos_active
+      TYPE(qs_energy_type), POINTER                      :: energy
+      TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(qcschema_type)                                :: qcschema_env
+      TYPE(cp_logger_type), POINTER                      :: logger
+      ! CHARACTER(LEN=default_path_length)                 :: filename
+
+      CALL timeset(routineN, handle)
+
+      t1 = m_walltime()
+
+      logger => cp_get_default_logger()
+      output_unit = cp_logger_get_default_io_unit(logger)
+
+      ! get important info from the input
+      CALL section_vals_val_get(as_input, "MAX_ITER", i_val=max_iter)
+      CALL section_vals_val_get(as_input, "EPS_EMBEDDING", r_val=eps_embedding)
+      WRITE(*,*) 'MAX_ITER = ', max_iter
+      WRITE(*,*) 'EPS_EMBEDDING = ', eps_embedding
+      alpha = 0.0
+
+      ! update density in ao basis with active density contribution
+      CALL get_qs_env(qs_env, rho=rho)
+      CALL qs_rho_get(rho, rho_ao=rho_ao)
+      CALL update_density_ao(active_space_env, rho_ao)
+
+      ! let's also calculate Vxc
+      qs_env%requires_matrix_vxc = .TRUE.
+
+      ! new density and Kohn-Sham matrix
+      CALL qs_rho_update_rho(rho, qs_env)
+      CALL qs_ks_did_change(qs_env%ks_env, rho_changed=.TRUE.)
+      CALL qs_ks_update_qs_env(qs_env)
+
+      ! reference energy
+      CALL get_qs_env(qs_env, energy=energy)
+      active_space_env%energy_ref = energy%total
+
+      ! update operators
+      mos_active => active_space_env%mos_active
+      CALL calculate_operators(mos_active, qs_env, active_space_env)
+
+      ! Calculate quantities that do not change in embedding scheme
+
+      ! inactive subspace energy and active Fock operator
+      CALL subspace_fock_matrix(active_space_env)
+      ! CALL fcidump(active_space_env, as_input)
+
+      CALL set_qs_env(qs_env, active_space=active_space_env)
+      ! create and populate qcschema instance
+      CALL qcschema_env_create(qcschema_env, qs_env)
+      ! dump qcschema to file
+      CALL qcschema_to_hdf5(qcschema_env)
+
+      ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
+      ! TODO: implement the AS solver
+      CALL active_space_solver(as_input)
+      ! the call to the AS solver produces a new 1-RDM and a new energy
+
+      IF ((output_unit > 0)) THEN
+         WRITE (UNIT=output_unit, &
+                FMT="(/,T3,A,T12,A,T31,A,T39,A,T59,A,T75,A,/,T3,A)") &
+            "Iter", "Update method", "Time", "Convergence", "Total energy", "Change", &
+            REPEAT("-", 78)
+      END IF
+      ! CALL cp_add_iter_level(logger%iter_info, "QS_SCF")
+
+      iter = 0
+      DO WHILE (iter <= max_iter)
+         iter = iter + 1
+
+         CALL get_qs_env(qs_env, para_env=para_env)
+
+         ! this reads the AS 1-RDM
+         CALL read_active_density(active_space_env, para_env, qcschema_env)
+         ! this reads the AS energy
+         ! CALL read_active_energy(active_space_env, para_env, qcschema_env)
+
+         IF (iter == 1) THEN
+            energy_old = active_space_env%energy_ref
+         ELSE
+            energy_old = energy_new
+         END IF
+
+         ! update total energy
+         ! energy_new = active_space_env%energy_inactive + active_space_env%energy_active
+         energy_new = active_space_env%energy_total
+
+         ! check for convergence
+         delta_E = energy_new - energy_old
+         IF (abs(delta_E) <= eps_embedding) THEN
+            IF (output_unit > 0) THEN
+               WRITE (UNIT=output_unit, FMT="(/,T3,A,I5,A/)") &
+                  "*** DFT Embedding run converged in ", iter, " iterations ***"
+            END IF
+            EXIT
+         END IF
+
+         t2 = m_walltime()
+         WRITE (UNIT=output_unit, FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,16X,F20.10)") &
+                  iter, "P_Mix/Diag.", alpha, t2 - t1, delta_E, energy_new, delta_E
+
+         ! Transform density to AO basis
+         CALL update_density_ao(active_space_env, rho_ao)
+
+         ! Compute total energy with update density
+         ! let's also calculate Vxc
+         qs_env%requires_matrix_vxc = .TRUE.
+
+         CALL qs_rho_update_rho(rho, qs_env)
+         CALL qs_ks_did_change(qs_env%ks_env, rho_changed=.TRUE.)
+         CALL qs_ks_update_qs_env(qs_env)
+
+         ! Updated reference energy
+         CALL get_qs_env(qs_env, energy=energy)
+
+         ! update inactive subspace energy and active Fock operator
+         CALL subspace_fock_matrix(active_space_env)
+         ! CALL fcidump(active_space_env, as_input)
+
+         ! update qcschema env and dump info on disk
+         CALL qcschema_update_fock(qcschema_env, active_space_env)
+         CALL qcschema_to_hdf5(qcschema_env)
+
+         ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
+         CALL active_space_solver(as_input)
+
+         ! active_space_env%energy_ref = energy%total
+         t1 = m_walltime()
+      END DO
+
+      ! release the qcschema instance
+      CALL qcschema_env_release(qcschema_env)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE dft_embedding
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param active_space_env ...
+!> \param as_input ...
+! **************************************************************************************************
+   SUBROUTINE active_space_solver(as_input)
+      TYPE(section_vals_type), POINTER                   :: as_input
+
+      CHARACTER(LEN=default_path_length)                 :: qiskit_script, qiskit_installation, command
+      ! INTEGER                                            :: exit_status, cmd_status
+
+      CALL section_vals_val_get(as_input, "QISKIT%PYTHON_PATH", c_val=qiskit_installation)
+      CALL section_vals_val_get(as_input, "QISKIT%SCRIPT", c_val=qiskit_script)
+
+      ! write(command,'(A, X, A)') TRIM(qiskit_installation), TRIM(qiskit_script)
+      command = TRIM(qiskit_installation) // ' ' // TRIM(qiskit_script)
+
+      write(*,*) command
+
+      ! CALL execute_command_line(command, wait=.true., exitstat=exit_status, cmdstat=cmd_status)
+
+   END SUBROUTINE active_space_solver
+
+
+! **************************************************************************************************
+!> \brief Update the density matrix in AO basis with the active density contribution
+!> \param ...
+! **************************************************************************************************
+   SUBROUTINE update_density_ao(active_space_env, rho_ao)
+      TYPE(active_space_type), POINTER                   :: active_space_env
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao
+
+      INTEGER                                            :: ispin, nao, nmo, nspins
+      TYPE(cp_fm_type)                                   :: U, R
+      TYPE(cp_fm_type), POINTER                          :: C_active, p_active_mo
+      TYPE(dbcsr_type), POINTER                          :: p_inactive_ao
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos_active
+
+      ! In the following we want to transform the AS density matrix P_MO
+      ! to the atomic orbital basis, and this is simply C * P_MO * C^T
+      ! However, in the following is done as
+      ! 1. Compute P_MO^(1/2)
+      ! 2. Get U = C*P_MO^(1/2)
+      ! 3. Get P_AO = U*U^T = (C*P_MO^(1/2)) * (C*P_MO^(1/2))^T = C*P_MO^(1/2)*P_MO^(1/2)^T*C^T = C*P_MO*C^T
+      ! Because P_MO^(1/2)^T = P_MO^(1/2), since P_MO is symmetric positive semi-definite
+      ! This is weird because we need to compute the square root of a matrix which is expensive
+      nspins = active_space_env%nspins
+      mos_active => active_space_env%mos_active
+      DO ispin = 1, nspins
+         ! size of p_inactive_ao is (nao x nao)
+         p_inactive_ao => active_space_env%pmat_inactive(ispin)%matrix
+         CALL dbcsr_copy(rho_ao(ispin)%matrix, p_inactive_ao)
+         ! size of p_active_mo is (nmo x nmo)
+         p_active_mo => active_space_env%p_active(ispin)%matrix
+
+         ! calclulate U = SQRT(P), s.t. P = U^T*U = U*U
+         CALL cp_fm_create(U, p_active_mo%matrix_struct)
+         CALL cp_fm_to_fm(p_active_mo, U)
+         CALL cp_fm_sqrt(U)
+
+         ! calculate R = C * U
+         CALL get_mo_set(mos_active(ispin), mo_coeff=C_active, nao=nao, nmo=nmo)
+         CALL cp_fm_create(R, C_active%matrix_struct)
+         CALL parallel_gemm("N", "N", nao, nmo, nmo, 1.0_dp, C_active, U, 0.0_dp, R)
+
+         ! calculate p_inactive_ao + p_active_ao, where
+         ! p_active_ao = R*R^T = C*U * U^T*C^T = C * P_MO * C^T
+         CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=rho_ao(ispin)%matrix, &
+                                    matrix_v=R, ncol=nmo, alpha=1.0_dp)
+
+         CALL cp_fm_release(R)
+         CALL cp_fm_release(U)
+      END DO
+
+         ! Test that
+         ! C * P_MO * C^T
+         ! works as well
+         ! CALL cp_fm_create(P_MO, pmat%matrix_struct)
+         ! CALL cp_fm_to_fm(pmat, P_MO)
+         ! CALL cp_fm_create(tmp, fm_active%matrix_struct)
+         ! CALL cp_fm_create(vec, fm_active%matrix_struct)
+         ! CALL dbcsr_copy(rho_ao(ispin)%matrix, pinact)
+         ! CALL parallel_gemm("N", "N", nao, nmo, nmo, 1.0_dp, fm_active, P_MO, 0.0_dp, tmp)
+         ! CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=rho_ao(ispin)%matrix, &
+         !                            matrix_v=tmp, matrix_g=fm_active, ncol=nmo, alpha=1.0_dp)
+         ! CALL cp_dbcsr_write_sparse_matrix(rho_ao(ispin)%matrix, 4, 4, qs_env, para_env, output_unit=iw, omit_headers=.false.)
+         ! CALL cp_fm_release(P_MO)
+         ! CALL cp_fm_release(vec)
+         ! CALL cp_fm_release(tmp)
+
+   END SUBROUTINE update_density_ao
 
 ! **************************************************************************************************
 !> \brief Calculate the SQRT of a FM matrix
