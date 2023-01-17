@@ -2710,9 +2710,9 @@ CONTAINS
       CALL qcschema_to_hdf5(qcschema_env)
 
       ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
-      ! TODO: implement the AS solver
-      CALL active_space_solver(as_input)
+      CALL active_space_solver(active_space_env, as_input)
       ! the call to the AS solver produces a new 1-RDM and a new energy
+      ! TODO: update the active_space_env%energy_active and %energy_total
 
       IF ((output_unit > 0)) THEN
          WRITE (UNIT=output_unit, &
@@ -2750,12 +2750,14 @@ CONTAINS
                WRITE (UNIT=output_unit, FMT="(/,T3,A,I5,A/)") &
                   "*** DFT Embedding run converged in ", iter, " iterations ***"
             END IF
+            ! TODO: finalize quantities
             EXIT
          END IF
 
          t2 = m_walltime()
-         WRITE (UNIT=output_unit, FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,16X,F20.10)") &
-                  iter, "P_Mix/Diag.", alpha, t2 - t1, delta_E, energy_new, delta_E
+         WRITE (UNIT=output_unit, &
+                  FMT="(T2,I5,1X,A,T20,E8.2,1X,F6.1,1X,ES14.4,1X,F20.10,1X,ES9.2)") &
+                  iter, 'P_Mix', alpha, t2 - t1, delta_E, energy_new, delta_E
 
          ! Transform density to AO basis
          CALL update_density_ao(active_space_env, rho_ao)
@@ -2770,6 +2772,7 @@ CONTAINS
 
          ! Updated reference energy
          CALL get_qs_env(qs_env, energy=energy)
+         active_space_env%energy_ref = energy%total
 
          ! update inactive subspace energy and active Fock operator
          CALL subspace_fock_matrix(active_space_env)
@@ -2780,14 +2783,15 @@ CONTAINS
          CALL qcschema_to_hdf5(qcschema_env)
 
          ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
-         CALL active_space_solver(as_input)
+         CALL active_space_solver(active_space_env, as_input)
 
-         ! active_space_env%energy_ref = energy%total
          t1 = m_walltime()
       END DO
 
       ! release the qcschema instance
       CALL qcschema_env_release(qcschema_env)
+
+      WRITE (UNIT=output_unit, FMT="(T2,A)") "It's over"
 
       CALL timestop(handle)
 
@@ -2800,21 +2804,20 @@ CONTAINS
 !> \param active_space_env ...
 !> \param as_input ...
 ! **************************************************************************************************
-   SUBROUTINE active_space_solver(as_input)
+   SUBROUTINE active_space_solver(active_space_env, as_input)
+      TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(section_vals_type), POINTER                   :: as_input
 
       CHARACTER(LEN=default_path_length)                 :: qiskit_script, qiskit_installation, command
-      ! INTEGER                                            :: exit_status, cmd_status
+      INTEGER                                            :: exit_status, cmd_status
 
       CALL section_vals_val_get(as_input, "QISKIT%PYTHON_PATH", c_val=qiskit_installation)
       CALL section_vals_val_get(as_input, "QISKIT%SCRIPT", c_val=qiskit_script)
 
       ! write(command,'(A, X, A)') TRIM(qiskit_installation), TRIM(qiskit_script)
-      command = TRIM(qiskit_installation) // ' ' // TRIM(qiskit_script)
+      command = TRIM(qiskit_installation) // ' ' // TRIM(qiskit_script) // ' ' // TRIM(active_space_env%p_act_filename)
 
-      write(*,*) command
-
-      ! CALL execute_command_line(command, wait=.true., exitstat=exit_status, cmdstat=cmd_status)
+      CALL execute_command_line(command, wait=.true., exitstat=exit_status, cmdstat=cmd_status)
 
    END SUBROUTINE active_space_solver
 
