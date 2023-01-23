@@ -924,7 +924,7 @@ MODULE qcschema
 
       CALL h5close_f(error)
 
-      WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") 'qcschema hdf5 file written!'
+      ! WRITE (UNIT=output_unit, FMT="(/,T5,A,/)") 'qcschema hdf5 file written!'
 
    END SUBROUTINE qcschema_to_hdf5
 
@@ -1803,7 +1803,6 @@ MODULE qcschema
       IF (error < 0) CPABORT('ERROR: opening HDF5 attribute failed')
 
       buffer = C_LOC(attr_data)
-      write(*,*) attr_data
       ! read the data
       CALL h5aread_f(attr_id, type_id, buffer, error)
       IF (error < 0) CPABORT('ERROR: reading HDF5 attribute failed')
