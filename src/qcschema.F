@@ -398,8 +398,13 @@ MODULE qcschema
       !    nalpha = nel/2
       !    nbeta  = nel/2
       ! END IF
-      nalpha = active_space_env%nelec_active_spinwise(1)
-      nbeta =  active_space_env%nelec_active_spinwise(2)
+      if (nspins == 1) then
+         nalpha = active_space_env%nelec_active_spinwise(1)/2
+         nbeta  = nalpha
+      else
+         nalpha = active_space_env%nelec_active_spinwise(1)
+         nbeta  = active_space_env%nelec_active_spinwise(2)
+      end if
 
       qcschema_env%properties%calcinfo_natom  = natoms
       qcschema_env%properties%calcinfo_nbasis = nao
