@@ -141,7 +141,8 @@ MODULE qs_active_space_methods
                                               task_list_type
    USE qcschema,                        ONLY: qcschema_type, qcschema_env_create, &
                                               qcschema_env_release, qcschema_to_hdf5, &
-                                              read_pmat_from_hdf5, qcschema_update_fock
+                                              read_pmat_from_hdf5, qcschema_update_fock, &
+                                              read_return_energy_from_hdf5
 
 #include "./base/base_uses.f90"
 
@@ -2712,6 +2713,9 @@ CONTAINS
       ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
       CALL active_space_solver(active_space_env, as_input)
       ! the call to the AS solver produces a new 1-RDM and a new energy
+      CALL get_qs_env(qs_env, para_env=para_env)
+      CALL read_active_density(active_space_env, para_env, qcschema_env)
+      CALL read_active_energy(active_space_env, qcschema_env)
       ! TODO: update the active_space_env%energy_active and %energy_total
 
       IF ((output_unit > 0)) THEN
@@ -2726,10 +2730,10 @@ CONTAINS
       DO WHILE (iter <= max_iter)
          iter = iter + 1
 
-         CALL get_qs_env(qs_env, para_env=para_env)
+         ! CALL get_qs_env(qs_env, para_env=para_env)
 
          ! this reads the AS 1-RDM
-         CALL read_active_density(active_space_env, para_env, qcschema_env)
+         ! CALL read_active_density(active_space_env, para_env, qcschema_env)
          ! this reads the AS energy
          ! CALL read_active_energy(active_space_env, para_env, qcschema_env)
 
@@ -2784,6 +2788,8 @@ CONTAINS
 
          ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
          CALL active_space_solver(active_space_env, as_input)
+         CALL read_active_density(active_space_env, para_env, qcschema_env)
+         CALL read_active_energy(active_space_env, qcschema_env)
 
          t1 = m_walltime()
       END DO
@@ -2971,6 +2977,30 @@ CONTAINS
 
       cont = .TRUE.
    END FUNCTION eri_fcidump_checksum_func
+
+
+! **************************************************************************************************
+!> \brief Reads active space energy from qcschema file
+!> \param active_space_env ...
+!> \param para_env ...
+!> \param qcschema_env ...
+!> \author Stefano Battaglia
+! **************************************************************************************************
+   SUBROUTINE read_active_energy(active_space_env, qcschema_env)
+      TYPE(active_space_type), POINTER                   :: active_space_env
+      TYPE(qcschema_type)                                :: qcschema_env
+
+      CHARACTER(LEN=default_path_length)                 :: p_act_filename
+
+      ! File name
+      p_act_filename = active_space_env%p_act_filename
+      ! read active space energy
+      CALL read_return_energy_from_hdf5(p_act_filename, qcschema_env)
+
+      active_space_env%energy_active = qcschema_env%properties%return_energy
+      active_space_env%energy_total = active_space_env%energy_inactive + active_space_env%energy_active
+
+   END SUBROUTINE read_active_energy
 
 ! **************************************************************************************************
 !> \brief Reads active space density from external file

@@ -46,7 +46,7 @@ MODULE qcschema
                                              h5screate_f, h5screate_simple_f, h5sclose_f, &
                                              h5sget_simple_extent_npoints_f, H5S_SCALAR_F, &
                                              h5gcreate_f, h5gopen_f, h5gclose_f, &
-                                             h5acreate_f, h5awrite_f, h5aclose_f, &
+                                             h5acreate_f, h5awrite_f, h5aread_f, h5aopen_f, h5aclose_f, &
                                              h5dcreate_f, h5dopen_f, h5dwrite_f, h5dread_f, h5dclose_f, &
                                              h5dget_space_f, &
                                              h5tset_size_f, h5tset_cset_f, h5tcopy_f, h5tset_strpad_f, &
@@ -55,7 +55,7 @@ MODULE qcschema
                                              H5T_STR_NULLPAD_F, H5T_NATIVE_INTEGER, &
                                              H5T_NATIVE_DOUBLE, HID_T, H5F_ACC_TRUNC_F, &
                                              SIZE_T, H5T_C_S1, HSIZE_T, H5F_ACC_RDONLY_F
-   USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int
+   USE iso_c_binding,                  ONLY: c_ptr, C_LOC, c_int, C_F_POINTER
 
 #include "./base/base_uses.f90"
 
@@ -68,7 +68,7 @@ MODULE qcschema
 
    PUBLIC :: qcschema_type
    PUBLIC :: qcschema_env_create, qcschema_env_release, qcschema_to_hdf5, &
-             read_pmat_from_hdf5, qcschema_update_fock
+             read_pmat_from_hdf5, qcschema_update_fock, read_return_energy_from_hdf5
 
 
 ! **************************************************************************************************
@@ -979,6 +979,41 @@ MODULE qcschema
 
 
 ! **************************************************************************************************
+!> \brief Reads the return energy from a qcschema hdf5 file
+!> \param filename the path to the qcschema hdf5 file
+!> \param qcschema_env the qcschema environment onto which it writes the energy
+! **************************************************************************************************
+   SUBROUTINE read_return_energy_from_hdf5(filename, qcschema_env)
+      CHARACTER(LEN=default_path_length), INTENT(IN)  :: filename
+      TYPE(qcschema_type), INTENT(INOUT)              :: qcschema_env
+      INTEGER                                         :: error
+      INTEGER(KIND=hid_t)                             :: file_id, group_id
+
+
+      ! initialize HDF5 Fortran API
+      CALL h5open_f(error)
+      IF (error < 0) CPABORT('ERROR: initialization of HDF5 interface failed')
+
+      ! open qcschema hdf5 file
+      CALL h5fopen_f(TRIM(filename), H5F_ACC_RDONLY_F, file_id, error)
+      IF (error < 0) CPABORT('ERROR: opening of HDF5 file failed')
+
+      ! open the properties group
+      CALL h5gopen_f(file_id, 'properties', group_id, error)
+      IF (error < 0) CPABORT('ERROR: opening of "properties" group failed')
+
+      ! read the alpha density
+      CALL h5aread_double_scalar(group_id, 'return_energy', qcschema_env%properties%return_energy)
+
+      ! close everything
+      CALL h5gclose_f(group_id, error)
+      CALL h5fclose_f(file_id, error)
+      CALL h5close_f(error)
+
+   END SUBROUTINE read_return_energy_from_hdf5
+
+
+! **************************************************************************************************
 !> \brief Updates the Fock matrix and the inactive energy in a qcschema object
 !> \param qcschema_env the qcschema environment
 !> \param active_space_env the active space environment with the updated data
@@ -1744,6 +1779,40 @@ MODULE qcschema
       IF (error < 0) CPABORT('ERROR: closing HDF5 dataspace failed')
 
    END SUBROUTINE h5dread_double_simple
+
+
+! **************************************************************************************************
+!> \brief Read an attribute containing a scalar double
+!> \param loc_id either file id or group id
+!> \param dset_name the name of the dataset
+!> \param dset_data where the read dataset data will be written
+! **************************************************************************************************
+   SUBROUTINE h5aread_double_scalar(loc_id, attr_name, attr_data)
+      INTEGER(KIND=hid_t), INTENT(IN)                       :: loc_id
+      CHARACTER(LEN=*), INTENT(IN)                          :: attr_name
+      REAL(KIND=dp), INTENT(OUT), TARGET                    :: attr_data
+      INTEGER(KIND=hid_t)                                   :: attr_id, type_id
+      TYPE(c_ptr)                                           :: buffer
+      INTEGER                                               :: error
+
+      ! set the type of data
+      type_id = H5T_NATIVE_DOUBLE
+
+      ! open the attribute
+      CALL h5aopen_f(loc_id, attr_name, attr_id, error)
+      IF (error < 0) CPABORT('ERROR: opening HDF5 attribute failed')
+
+      buffer = C_LOC(attr_data)
+      write(*,*) attr_data
+      ! read the data
+      CALL h5aread_f(attr_id, type_id, buffer, error)
+      IF (error < 0) CPABORT('ERROR: reading HDF5 attribute failed')
+
+      ! close the attribute
+      CALL h5aclose_f(attr_id, error)
+      IF (error < 0) CPABORT('ERROR: closing HDF5 attribute failed')
+
+   END SUBROUTINE h5aread_double_scalar
 
 
 END MODULE qcschema
