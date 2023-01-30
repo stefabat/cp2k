@@ -1196,6 +1196,7 @@ CONTAINS
          END DO
          DEALLOCATE (active_space_env%ks_sub)
       END IF
+      ! get the Kohn-Sham/Fock matrix in AO basis -> ks_matrix
       CALL get_qs_env(qs_env, matrix_ks_kp=ks_matrix)
       IF (SIZE(ks_matrix, 2) > 1) THEN
          CPABORT("No k-points allowed at this point")
@@ -1204,6 +1205,7 @@ CONTAINS
       DO is = 1, nspins
          CALL get_mo_set(mo_set=mos(is), mo_coeff=mo_coeff, nmo=nmo)
          IF (.NOT. ASSOCIATED(active_space_env%ks_sub(is)%matrix)) ALLOCATE (active_space_env%ks_sub(is)%matrix)
+         ! transform the KS/Fock matrix from AO to MO basis
          CALL subspace_operator(mo_coeff, nmo, ks_matrix(is, 1)%matrix, active_space_env%ks_sub(is)%matrix)
       END DO
 
@@ -2109,9 +2111,9 @@ CONTAINS
       nspins = active_space_env%nspins
 
       IF (nspins == 1) THEN
-         CALL get_mo_set(active_space_env%mos_active(1), nmo=norb)
-         NULLIFY (mo_coef)
-         CALL get_mo_set(active_space_env%mos_active(1), mo_coeff=mo_coef)
+         ! CALL get_mo_set(active_space_env%mos_active(1), nmo=norb)
+         ! NULLIFY (mo_coef)
+         CALL get_mo_set(active_space_env%mos_active(1), nmo=norb, mo_coeff=mo_coef)
          !
          ! Loop over ERI, calculate subspace HF energy and Fock matrix
          !
@@ -2119,21 +2121,31 @@ CONTAINS
          ALLOCATE (ks_mat(norb, norb), ks_ref(norb, norb), p_mat(norb, norb))
          ks_ref = 0.0_dp
 
+         ! ks_mat contains the KS/Fock matrix within the AS MO subspace
+         ! this is f_ref in eq. 19
          CALL replicate_and_symmetrize_matrix(norb, active_space_env%p_active(1)%matrix, p_mat)
          CALL replicate_and_symmetrize_matrix(norb, active_space_env%ks_sub(1)%matrix, ks_mat)
-         !
-         !
+
+         ! compute ks_ref = V_H[rho^A] + V_HFX[rho^A]
          eri => active_space_env%eri%eri(1)%csr_mat
          CALL build_subspace_fock_matrix(active_space_env%active_orbitals, eri, p_mat, ks_ref)
-         !
-         ! calculate energy
-         eeri = 0.0_dp
+
+         ! compute eeri = E_H[rho^A] + E_HFX[rho^A] as
+         ! eeri = 1/2 * (SUM_pq (V_H[rho^A] + V_HFX[rho^A])_pq * D^A_pq)
          eeri = 0.5_dp*SUM(ks_ref*p_mat)
+
+         ! now calculate the inactive energy acoording to eq. 19, that is
+         ! esub = E^I = E_ref - f_ref .* D^A + E_H[rho^A] + E_HFX[rho^A]
+         ! where f^ref = ks_mat, which is the KS/Fock matrix in MO basis, transformed previously
+         ! and is equal to ks_mat = h^0 + V_core + V_H[rho] + V_HFX[rho]
          esub = eref - SUM(ks_mat(1:norb, 1:norb)*p_mat(1:norb, 1:norb)) + eeri
+
+         ! reuse ks_mat to store f^I = f^ref - V_H[rho^A] + V_HFX[rho^A]
+         ! according to eq. 20
          ks_mat(1:norb, 1:norb) = ks_mat(1:norb, 1:norb) - ks_ref(1:norb, 1:norb)
-         !
+
          active_space_env%energy_inactive = esub
-         !
+
          IF (ASSOCIATED(active_space_env%fock_sub)) THEN
             DO is = 1, SIZE(active_space_env%fock_sub)
                CALL cp_fm_release(active_space_env%fock_sub(is)%matrix)
@@ -2651,6 +2663,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER :: routineN = 'dft_embedding'
 
+      LOGICAL                                            :: should_stop
       INTEGER                                            :: handle, iter, max_iter, output_unit
       REAL(KIND=dp)                                      :: energy_old, energy_new, delta_E, eps_embedding, alpha
       REAL(KIND=dp)                                      :: t1, t2
@@ -2696,6 +2709,8 @@ CONTAINS
       ! update operators
       mos_active => active_space_env%mos_active
       CALL calculate_operators(mos_active, qs_env, active_space_env)
+      ! -> now we have KS/Fock, Vxc and Hcore matrices in active MO basis
+      ! They are different from zero only within the active-active block
 
       ! Calculate quantities that do not change in embedding scheme
 
@@ -2710,6 +2725,11 @@ CONTAINS
 
       ! init call to active space solver
       CALL active_space_solver(active_space_env, as_input)
+      ! wait until the file WAIT is removed
+      CALL external_control(should_stop, "AS", &
+                            start_time=qs_env%start_time, &
+                            target_time=qs_env%target_time, &
+                            force_check=.TRUE.)
 
       ! read in computed AS quantities
       CALL get_qs_env(qs_env, para_env=para_env)
@@ -2726,6 +2746,9 @@ CONTAINS
          ! update qs total energy to final embedding energy
          CALL get_qs_env(qs_env, energy=energy)
          energy%total = active_space_env%energy_total
+
+         CALL active_space_finalize()
+
          ! release the qcschema instance
          CALL qcschema_env_release(qcschema_env)
 
@@ -2762,7 +2785,7 @@ CONTAINS
             energy%total = active_space_env%energy_total
             ! CALL set_qs_env(qs_env, energy=energy)
 
-            ! TODO: finalize quantities
+            CALL active_space_finalize()
 
             EXIT
          END IF
@@ -2772,15 +2795,14 @@ CONTAINS
                   FMT="(T2,I5,4X,A,T20,F4.2,1X,F6.1,1X,ES14.4,1X,F20.10,1X,ES9.2)") &
                   iter, 'P_Mix', alpha, t2 - t1, delta_E, energy_new, delta_E
 
-         ! Transform density to AO basis
+         ! transform density to AO basis
          CALL update_density_ao(active_space_env, rho_ao)
 
-         ! Compute total energy with update density
          ! let's also calculate Vxc
          qs_env%requires_matrix_vxc = .TRUE.
-
          CALL qs_rho_update_rho(rho, qs_env)
          CALL qs_ks_did_change(qs_env%ks_env, rho_changed=.TRUE.)
+         ! Compute total energy with update density
          CALL qs_ks_update_qs_env(qs_env)
 
          ! Update reference energy
@@ -2794,8 +2816,13 @@ CONTAINS
          CALL qcschema_update_fock(qcschema_env, active_space_env)
          CALL qcschema_to_hdf5(qcschema_env)
 
-         ! CALL external_control(should_stop, "AS", target_time=qs_env%target_time, start_time=m_walltime(), force_check=.TRUE.)
          CALL active_space_solver(active_space_env, as_input)
+         ! wait until the file WAIT is removed
+         CALL external_control(should_stop, "AS", &
+                               start_time=qs_env%start_time, &
+                               target_time=qs_env%target_time, &
+                               force_check=.TRUE.)
+
          CALL read_active_density(active_space_env, para_env, qcschema_env)
          CALL read_active_energy(active_space_env, qcschema_env)
 
@@ -2821,7 +2848,7 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: as_input
 
       CHARACTER(LEN=default_path_length)                 :: qiskit_script, qiskit_installation, command
-      INTEGER                                            :: exit_status, cmd_status
+      INTEGER                                            :: exit_status, cmd_status, unit_number
 
       CALL section_vals_val_get(as_input, "QISKIT%PYTHON_PATH", c_val=qiskit_installation)
       CALL section_vals_val_get(as_input, "QISKIT%SCRIPT", c_val=qiskit_script)
@@ -2829,9 +2856,35 @@ CONTAINS
       ! write(command,'(A, X, A)') TRIM(qiskit_installation), TRIM(qiskit_script)
       command = TRIM(qiskit_installation) // ' ' // TRIM(qiskit_script) // ' ' // TRIM(active_space_env%p_act_filename)
 
-      CALL execute_command_line(command, wait=.true., exitstat=exit_status, cmdstat=cmd_status)
+      CALL execute_command_line(command, wait=.false., exitstat=exit_status, cmdstat=cmd_status)
+
+      ! create WAIT file
+      CALL open_file(file_name="WAIT", file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=unit_number)
+      CALL close_file(unit_number=unit_number)
 
    END SUBROUTINE active_space_solver
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param active_space_env ...
+!> \param as_input ...
+! **************************************************************************************************
+   SUBROUTINE active_space_finalize()
+      ! TYPE(active_space_type), POINTER                   :: active_space_env
+      ! TYPE(section_vals_type), POINTER                   :: as_input
+      INTEGER                                            :: unit_number
+
+      ! create EXIT_QISKIT file
+      CALL open_file(file_name="EXIT_QISKIT", file_status="UNKNOWN", &
+                     file_form="FORMATTED", file_action="WRITE", &
+                     unit_number=unit_number)
+      CALL close_file(unit_number=unit_number)
+
+   END SUBROUTINE active_space_finalize
 
 
 ! **************************************************************************************************
