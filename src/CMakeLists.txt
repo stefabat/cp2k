@@ -198,6 +198,7 @@ list(
   grid/grid_api.F
   group_dist_types.F
   grrm_utils.F
+  gapw_1c_basis_set.F
   hartree_local_methods.F
   hartree_local_types.F
   header.F
@@ -295,6 +296,7 @@ list(
   manybody_eam.F
   manybody_gal21.F
   manybody_gal.F
+  manybody_nequip.F
   manybody_potential.F
   manybody_quip.F
   manybody_siepmann.F
@@ -384,6 +386,7 @@ list(
   optimize_embedding_potential.F
   optimize_input.F
   outer_scf_control_types.F
+  paw_proj_set_types.F
   pair_potential_coulomb.F
   pair_potential.F
   pair_potential_types.F
@@ -401,9 +404,11 @@ list(
   pao_optimizer.F
   pao_param_exp.F
   pao_param.F
+  pao_param_equi.F
   pao_param_fock.F
   pao_param_gth.F
   pao_param_linpot.F
+  pao_param_methods.F
   pao_potentials.F
   pao_types.F
   particle_methods.F
@@ -746,6 +751,7 @@ list(
   topology_util.F
   topology_xtl.F
   topology_xyz.F
+  torch_api.F
   transport_env_types.F
   transport.F
   uff_vdw_radii_table.F
@@ -808,6 +814,7 @@ list(
   aobasis/orbital_pointers.F
   aobasis/orbital_symbols.F
   aobasis/orbital_transformation_matrices.F
+  aobasis/paw_basis_types.F
   aobasis/soft_basis_set.F
   aobasis/sto_ng.F)
 
@@ -1356,6 +1363,9 @@ target_compile_features(cp2k PUBLIC cxx_std_11)
 target_compile_features(cp2k PUBLIC c_std_99)
 target_compile_features(cp2k PUBLIC cuda_std_11)
 
+set_target_properties(cp2k PROPERTIES CXX_STANDARD 11)
+set_target_properties(cp2k PROPERTIES IMPORTED_LINK_INTERFACE_LANGUAGES "CXX")
+
 # =================================================================================================
 # main CP2K OBJECT LIBRARY
 if(CP2K_USE_ACCEL MATCHES "CUDA")
@@ -1504,7 +1514,8 @@ list(
   "graph"
   "dumpdcd"
   "xyz2dcd"
-  "libcp2k_unittest")
+  "libcp2k_unittest"
+  "nequip_unittest")
 
 add_executable(cp2k-bin start/cp2k.F)
 set_target_properties(
@@ -1518,16 +1529,17 @@ add_executable(graph metadyn_tools/graph.F)
 add_executable(dumpdcd motion/dumpdcd.F)
 add_executable(xyz2dcd motion/xyz2dcd.F)
 add_executable(libcp2k_unittest start/libcp2k_unittest.c)
+add_executable(nequip_unittest nequip_unittest.F)
 
 set_target_properties(cp2k-bin PROPERTIES CXX_STANDARD 11)
 set_target_properties(cp2k-bin PROPERTIES IMPORTED_LINK_INTERFACE_LANGUAGES
                                           "CXX")
-set_target_properties(cp2k-bin PROPERTIES LINKER_LANGUAGE Fortran)
+set_target_properties(cp2k-bin PROPERTIES LINKER_LANGUAGE "CXX")
 set_target_properties(cp2k-bin PROPERTIES OUTPUT_NAME cp2k)
 target_link_libraries(cp2k-bin PUBLIC cp2k)
 
 foreach(_app ${__CP2K_APPS})
-  set_target_properties(${_app} PROPERTIES LINKER_LANGUAGE Fortran)
+  set_target_properties(${_app} PROPERTIES LINKER_LANGUAGE "CXX")
   set_target_properties(${_app} PROPERTIES CXX_STANDARD 11)
   set_target_properties(${_app} PROPERTIES IMPORTED_LINK_INTERFACE_LANGUAGES
                                            "CXX")
