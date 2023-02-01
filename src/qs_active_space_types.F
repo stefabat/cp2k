@@ -94,11 +94,11 @@ MODULE qs_active_space_types
       TYPE(eri_type)                               :: eri
       TYPE(mo_set_type), DIMENSION(:), POINTER     :: mos_active
       TYPE(mo_set_type), DIMENSION(:), POINTER     :: mos_inactive
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: p_active
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: ks_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: vxc_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: h_sub
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER    :: fock_sub
+      TYPE(cp_fm_type), DIMENSION(:), POINTER    :: p_active
+      TYPE(cp_fm_type), DIMENSION(:), POINTER    :: ks_sub
+      TYPE(cp_fm_type), DIMENSION(:), POINTER    :: vxc_sub
+      TYPE(cp_fm_type), DIMENSION(:), POINTER    :: h_sub
+      TYPE(cp_fm_type), DIMENSION(:), POINTER    :: fock_sub
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER    :: pmat_inactive
    END TYPE active_space_type
 

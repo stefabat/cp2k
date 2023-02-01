@@ -485,12 +485,12 @@ MODULE qcschema
 
       ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_a(nmo*nmo))
       ! alpha Fock matrix
-      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
+      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1), &
          qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
 
       ALLOCATE (qcschema_env%wavefunction%scf_density_mo_a(nmo*nmo))
       ! alpha density matrix
-      CALL subspace_symm_matrix_to_array(active_space_env%p_active(1)%matrix, &
+      CALL subspace_symm_matrix_to_array(active_space_env%p_active(1), &
          qcschema_env%wavefunction%scf_density_mo_a, i_glb_start, i_glb_end)
 
       ALLOCATE (qcschema_env%wavefunction%scf_orbitals_a(nao*nmo))
@@ -514,12 +514,12 @@ MODULE qcschema
 
          ALLOCATE (qcschema_env%wavefunction%scf_fock_mo_b(nmo*nmo))
          ! beta Fock matrix
-         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2)%matrix, &
+         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2), &
             qcschema_env%wavefunction%scf_fock_mo_b, i_glb_start, i_glb_end)
 
          ALLOCATE (qcschema_env%wavefunction%scf_density_mo_b(nmo*nmo))
          ! beta density matrix
-         CALL subspace_symm_matrix_to_array(active_space_env%p_active(2)%matrix, &
+         CALL subspace_symm_matrix_to_array(active_space_env%p_active(2), &
             qcschema_env%wavefunction%scf_density_mo_b, i_glb_start, i_glb_end)
 
          ALLOCATE (qcschema_env%wavefunction%scf_orbitals_b(nao*nmo))
@@ -1035,7 +1035,7 @@ MODULE qcschema
       i_glb_end   = active_space_env%active_orbitals(nmo, 1)
 
       ! alpha Fock matrix
-      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1)%matrix, &
+      CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(1), &
          qcschema_env%wavefunction%scf_fock_mo_a, i_glb_start, i_glb_end)
 
       ! beta Fock matrix
@@ -1043,7 +1043,7 @@ MODULE qcschema
          i_glb_start = active_space_env%active_orbitals(1, 2)
          i_glb_end   = active_space_env%active_orbitals(nmo, 2)
 
-         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2)%matrix, &
+         CALL subspace_symm_matrix_to_array(active_space_env%fock_sub(2), &
             qcschema_env%wavefunction%scf_fock_mo_b, i_glb_start, i_glb_end)
       END IF
 

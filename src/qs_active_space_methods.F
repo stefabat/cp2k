@@ -1199,9 +1199,9 @@ CONTAINS
       ALLOCATE (active_space_env%ks_sub(nspins))
       DO is = 1, nspins
          CALL get_mo_set(mo_set=mos(is), mo_coeff=mo_coeff, nmo=nmo)
-         IF (.NOT. ASSOCIATED(active_space_env%ks_sub(is)%matrix)) ALLOCATE (active_space_env%ks_sub(is)%matrix)
+         ! IF (.NOT. ASSOCIATED(active_space_env%ks_sub(is)%matrix)) ALLOCATE (active_space_env%ks_sub(is)%matrix)
          ! transform the KS/Fock matrix from AO to MO basis
-         CALL subspace_operator(mo_coeff, nmo, ks_matrix(is, 1)%matrix, active_space_env%ks_sub(is)%matrix)
+         CALL subspace_operator(mo_coeff, nmo, ks_matrix(is, 1)%matrix, active_space_env%ks_sub(is))
       END DO
 
       ! Vxc matrix
@@ -2114,8 +2114,8 @@ CONTAINS
 
          ! ks_mat contains the KS/Fock matrix within the AS MO subspace
          ! this is f_ref in eq. 19
-         CALL replicate_and_symmetrize_matrix(norb, active_space_env%p_active(1)%matrix, p_mat)
-         CALL replicate_and_symmetrize_matrix(norb, active_space_env%ks_sub(1)%matrix, ks_mat)
+         CALL replicate_and_symmetrize_matrix(norb, active_space_env%p_active(1), p_mat)
+         CALL replicate_and_symmetrize_matrix(norb, active_space_env%ks_sub(1), ks_mat)
 
          ! compute ks_ref = V_H[rho^A] + V_HFX[rho^A]
          eri => active_space_env%eri%eri(1)%csr_mat
@@ -2903,7 +2903,7 @@ CONTAINS
          p_inactive_ao => active_space_env%pmat_inactive(ispin)%matrix
          CALL dbcsr_copy(rho_ao(ispin)%matrix, p_inactive_ao)
          ! size of p_active_mo is (nmo x nmo)
-         p_active_mo => active_space_env%p_active(ispin)%matrix
+         p_active_mo => active_space_env%p_active(ispin)
 
          ! calclulate U = SQRT(P), s.t. P = U^T*U = U*U
          CALL cp_fm_create(U, p_active_mo%matrix_struct)
