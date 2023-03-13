@@ -307,7 +307,7 @@ MODULE qcschema
       TYPE(section_vals_type), POINTER                   :: input, hfx_sections
       INTEGER :: handle, output_unit, natoms, nspins, nmo, nao, nel, &
                  nalpha, nbeta, i_glb_start, i_glb_end, &
-                 atomic_number, iatom, ikind
+                 atomic_number, iatom, ikind, nmo2
       CHARACTER(LEN=2) :: atomic_symbol
       CHARACTER(LEN=default_string_length) :: method, basis_set_name
       REAL(KIND=dp)    :: dispersion, one_el_en, two_el_en, mass
@@ -529,18 +529,19 @@ MODULE qcschema
       END IF
 
       ! get the alpha-alpha eri
-      ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa(nmo**4))
+      nmo2 = nmo*(nmo+1)/2
+      ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_aa(nmo2*(nmo2+1)/2))
       CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_aa, &
                         active_space_env%active_orbitals, 1, 1)
 
       IF (nspins == 2) THEN
          ! get the alpha-beta eri
-         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_ab(nmo**4))
+         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_ab(nmo2**2))
          CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_ab, &
                            active_space_env%active_orbitals, 1, 2)
 
          ! get the beta-beta eri
-         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_bb(nmo**4))
+         ALLOCATE (qcschema_env%wavefunction%scf_eri_mo_bb(nmo2*(nmo2+1)/2))
          CALL eri_to_array(active_space_env%eri, qcschema_env%wavefunction%scf_eri_mo_bb, &
                            active_space_env%active_orbitals, 2, 2)
       END IF
@@ -1137,16 +1138,16 @@ MODULE qcschema
       TYPE(dbcsr_csr_type), POINTER                      :: eri
       INTEGER                                            :: i1, i2, i3, i4, &
                                                             i, j, k, l, &
-                                                            ijkl, jikl, ijlk, jilk, &
-                                                            klij, lkij, klji, lkji, &
+                                                            ijkl, ij, kl, &
                                                             i12, i12l, i34, i34l, &
                                                             nmo_active, nmo_total, &
-                                                            nindex, irptr, nmo_inactive
+                                                            nindex, irptr, nmo_inactive, nmo_pairs
       INTEGER, DIMENSION(2)                              :: irange
       REAL(KIND=dp)                                      :: erival
       TYPE(mp_comm_type)                                 :: mp_group
 
       nmo_active = SIZE(active_orbitals, 1)
+      nmo_pairs = nmo_active*(nmo_active+1)/2
       nmo_total = eri_env%norb
       nmo_inactive = nmo_total - nmo_active
       nindex = (nmo_total*(nmo_total + 1))/2
@@ -1168,6 +1169,13 @@ MODULE qcschema
          DO j = i, nmo_active
             i2 = active_orbitals(j, spin2)
             i12 = csr_idx_to_combined(i1, i2, nmo_total)
+
+            if (i < j) then
+               ij = (j-1)*j/2 + i-1
+            else
+               ij = (i-1)*i/2 + j-1
+            end if
+
             IF (i12 >= irange(1) .AND. i12 <= irange(2)) THEN
                i12l = i12 - irange(1) + 1
                irptr = eri%rowptr_local(i12l) - 1
@@ -1178,25 +1186,23 @@ MODULE qcschema
                   l = i4 - nmo_inactive
                   erival = eri%nzval_local%r_dp(irptr + i34l)
 
-                  ! 8-fold permutational symmetry
-                  ijkl = i + (j - 1)*nmo_active + (k - 1)*nmo_active**2 + (l - 1)*nmo_active**3
-                  jikl = j + (i - 1)*nmo_active + (k - 1)*nmo_active**2 + (l - 1)*nmo_active**3
-                  ijlk = i + (j - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
-                  jilk = j + (i - 1)*nmo_active + (l - 1)*nmo_active**2 + (k - 1)*nmo_active**3
-                  array(ijkl) = erival
-                  array(jikl) = erival
-                  array(ijlk) = erival
-                  array(jilk) = erival
-                  IF (spin1 == spin2) THEN
-                     klij = k + (l - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
-                     lkij = l + (k - 1)*nmo_active + (i - 1)*nmo_active**2 + (j - 1)*nmo_active**3
-                     klji = k + (l - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
-                     lkji = l + (k - 1)*nmo_active + (j - 1)*nmo_active**2 + (i - 1)*nmo_active**3
-                     array(klij) = erival
-                     array(lkij) = erival
-                     array(klji) = erival
-                     array(lkji) = erival
+                  IF (k < l) THEN
+                     kl = (l-1)*l/2 + k-1
+                  ELSE
+                     kl = (k-1)*k/2 + l-1
                   END IF
+
+                  IF (spin1 == spin2) THEN
+                     IF (ij < kl) THEN
+                        ijkl = kl*(kl+1)/2 + ij + 1
+                     ELSE
+                        ijkl = ij*(ij+1)/2 + kl + 1
+                     END IF
+                  ELSE
+                     ijkl = kl + ij*nmo_pairs + 1
+                  END IF
+
+                  array(ijkl) = erival
                END DO
             END IF
          END DO
