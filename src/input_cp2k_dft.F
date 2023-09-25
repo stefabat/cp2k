@@ -9238,6 +9238,14 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="ALPHA", &
+                          description="Density damping scheme. The percentage of density to be mixed "// &
+                          "from the previous iteration.", &
+                          usage="EPS_ITER 0.1 ", type_of_var=real_t, &
+                          default_r_val=0.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="MAX_ITER", &
                           description="Max number of iterations for the DFT embedding scheme.", &
                           usage="MAX_ITER 50", type_of_var=integer_t, &
@@ -9278,7 +9286,8 @@ CONTAINS
 
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="SOCKET", &
-                          description="Parameters to set up the socket communicating to the external active space solver.", &
+                          description="Parameters to set up the socket communicating to "// &
+                          "the external active space solver.", &
                           n_keywords=3, n_subsections=0, repeats=.FALSE.)
 
       NULLIFY (keyword)
