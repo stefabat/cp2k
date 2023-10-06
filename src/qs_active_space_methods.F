@@ -1354,6 +1354,7 @@ CONTAINS
       CALL get_qs_env(qs_env, qs_kind_set=qs_kind_set, cell=cell, &
                       particle_set=particle_set, atomic_kind_set=atomic_kind_set)
 
+      CALL m_flush(iw)
       ! pre-calculate wavefunctions on reals space grid
       nspins = SIZE(mos)
       IF (eri_env%eri_gpw%store_wfn) THEN
@@ -1395,6 +1396,7 @@ CONTAINS
       dvol = rho_r%pw_grid%dvol
       CALL mp_group%set_handle(eri_env%eri(1)%csr_mat%mp_group%get_handle())
 
+      CALL m_flush(iw)
       ! calculate the integrals
       intcount = 0
       DO isp1 = 1, nspins
