@@ -1206,18 +1206,12 @@ CONTAINS
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: eri_index
       LOGICAL                                            :: print1, print2, &
                                                             skip_load_balance_distributed
-<<<<<<< HEAD
       REAL(KIND=dp)                                      :: dvol, erint, pair_int, &
-                                                            progression_factor, rc, rsize
+                                                            progression_factor, rc, rsize, &
+                                                            max_cell_dim
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eri
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: data_block
-=======
-      REAL(KIND=dp)                                      :: cutoff_old, dvol, erint, pair_int, &
-                                                            progression_factor, rc, &
-                                                            relative_cutoff_old, rsize, max_cell_dim
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_cutoff_old, eri
       REAL(KIND=dp), DIMENSION(3,3)                      :: old_hmat
->>>>>>> 82ddd3013 (True OBC integrals with GPW analytic Poisson solver)
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env, blacs_env_sub
@@ -1294,8 +1288,7 @@ CONTAINS
       END IF
 
       ! This should be done differently! Copied from MP2 code
-<<<<<<< HEAD
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      CALL get_qs_env(qs_env, dft_control=dft_control, cell=cell)
       ALLOCATE (qs_control)
       qs_control_old => dft_control%qs_control
       qs_control = qs_control_old
@@ -1305,14 +1298,6 @@ CONTAINS
       nspins = SIZE(mos)
       ! Allocate new cutoffs (just in private qs_control, not in qs_control_old)
       ALLOCATE (qs_control%e_cutoff(n_multigrid))
-=======
-      CALL get_qs_env(qs_env, dft_control=dft_control, cell=cell)
-      progression_factor = dft_control%qs_control%progression_factor
-      n_multigrid = SIZE(dft_control%qs_control%e_cutoff)
-      ALLOCATE (e_cutoff_old(n_multigrid))
-      e_cutoff_old(:) = dft_control%qs_control%e_cutoff
-      cutoff_old = dft_control%qs_control%cutoff
->>>>>>> 82ddd3013 (True OBC integrals with GPW analytic Poisson solver)
 
       qs_control%cutoff = eri_env%eri_gpw%cutoff*0.5_dp
       qs_control%e_cutoff(1) = qs_control%cutoff
@@ -1322,15 +1307,6 @@ CONTAINS
       END DO
       qs_control%relative_cutoff = eri_env%eri_gpw%rel_cutoff*0.5_dp
 
-<<<<<<< HEAD
-      IF (eri_env%method == eri_method_gpw_ht) THEN
-         ! For now, we will distribute neighbor lists etc. within the global communicator
-         CALL get_qs_env(qs_env, ks_env=ks_env)
-         CALL create_mat_munu(mat_munu, qs_env, eri_env%eri_gpw%eps_grid, blacs_env_sub, sab_orb_sub=sab_orb_sub, &
-                              do_alloc_blocks_from_nbl=.TRUE., dbcsr_sym_type=dbcsr_type_symmetric)
-         CALL dbcsr_set(mat_munu%matrix, 0.0_dp)
-      END IF
-=======
       ! figure out size of the box
       IF (SUM(cell%perd) /= SUM(eri_env%periodicity)) THEN
          ! enter here only for obc-in-pbc
@@ -1349,10 +1325,13 @@ CONTAINS
          END IF
       END IF
 
-      relative_cutoff_old = dft_control%qs_control%relative_cutoff
-      dft_control%qs_control%relative_cutoff = eri_env%eri_gpw%rel_cutoff*0.5_dp
->>>>>>> 82ddd3013 (True OBC integrals with GPW analytic Poisson solver)
-
+      IF (eri_env%method == eri_method_gpw_ht) THEN
+         ! For now, we will distribute neighbor lists etc. within the global communicator
+         CALL get_qs_env(qs_env, ks_env=ks_env)
+         CALL create_mat_munu(mat_munu, qs_env, eri_env%eri_gpw%eps_grid, blacs_env_sub, sab_orb_sub=sab_orb_sub, &
+                              do_alloc_blocks_from_nbl=.TRUE., dbcsr_sym_type=dbcsr_type_symmetric)
+         CALL dbcsr_set(mat_munu%matrix, 0.0_dp)
+      END IF
       ! Generate the appropriate  pw_env
       NULLIFY (pw_env_sub)
       CALL pw_env_create(pw_env_sub)
@@ -1453,6 +1432,9 @@ CONTAINS
       CALL get_qs_env(qs_env, qs_kind_set=qs_kind_set, cell=cell, &
                       particle_set=particle_set, atomic_kind_set=atomic_kind_set)
 
+      CALL m_flush(iw)
+      ! pre-calculate wavefunctions on reals space grid
+      nspins = SIZE(mos)
       IF (eri_env%eri_gpw%store_wfn) THEN
          ! pre-calculate wavefunctions on reals space grid
          rsize = 0.0_dp
@@ -1511,6 +1493,7 @@ CONTAINS
       dvol = rho_r%pw_grid%dvol
       CALL mp_group%set_handle(eri_env%eri(1)%csr_mat%mp_group%get_handle())
 
+      CALL m_flush(iw)
       ! calculate the integrals
       stored_integrals = 0
       DO isp1 = 1, nspins
@@ -1549,16 +1532,6 @@ CONTAINS
                ! calculate charge distribution and potential
                CALL pw_zero(rho_r)
                CALL pw_multiply(rho_r, wfn1, wfn2)
-<<<<<<< HEAD
-               IF (print2) THEN
-                  erint = pw_integrate_function(rho_r)/dvol
-                  IF (iw > 0) THEN
-                     WRITE (iw, "(T4,'ERI_GPW| Integral rho_ab ',T32,2I4,' [',I1,']',T58,G20.14)") &
-                        iwa1, iwa2, isp1, erint
-                  END IF
-               END IF
-=======
->>>>>>> 82ddd3013 (True OBC integrals with GPW analytic Poisson solver)
                CALL pw_transfer(rho_r, rho_g)
                CALL pw_poisson_solve(poisson_env, rho_g, pair_int, pot_g)
                ! screening using pair_int
@@ -1728,19 +1701,11 @@ CONTAINS
          CALL cp_blacs_env_release(blacs_env_sub)
       END IF
       CALL pw_env_release(pw_env_sub)
-<<<<<<< HEAD
       ! Return to the old qs_control
       dft_control%qs_control => qs_control_old
       DEALLOCATE (qs_control%e_cutoff)
       DEALLOCATE (qs_control)
-=======
-      ! restore the initial value of the cutoff
-      dft_control%qs_control%e_cutoff = e_cutoff_old
-      dft_control%qs_control%cutoff = cutoff_old
-      dft_control%qs_control%relative_cutoff = relative_cutoff_old
       cell%hmat = old_hmat
-      DEALLOCATE (e_cutoff_old)
->>>>>>> 82ddd3013 (True OBC integrals with GPW analytic Poisson solver)
 
       CALL timestop(handle)
 
