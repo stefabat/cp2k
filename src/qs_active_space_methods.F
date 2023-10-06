@@ -1202,8 +1202,9 @@ CONTAINS
                                                             skip_load_balance_distributed
       REAL(KIND=dp)                                      :: cutoff_old, dvol, erint, pair_int, &
                                                             progression_factor, rc, &
-                                                            relative_cutoff_old, rsize
+                                                            relative_cutoff_old, rsize, max_cell_dim
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_cutoff_old, eri
+      REAL(KIND=dp), DIMENSION(3,3)                      :: old_hmat
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
@@ -1247,7 +1248,7 @@ CONTAINS
       END SELECT
 
       ! This should be done differently! Copied from MP2 code
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      CALL get_qs_env(qs_env, dft_control=dft_control, cell=cell)
       progression_factor = dft_control%qs_control%progression_factor
       n_multigrid = SIZE(dft_control%qs_control%e_cutoff)
       ALLOCATE (e_cutoff_old(n_multigrid))
@@ -1260,6 +1261,24 @@ CONTAINS
          dft_control%qs_control%e_cutoff(i_multigrid) = dft_control%qs_control%e_cutoff(i_multigrid - 1) &
                                                         /progression_factor
       END DO
+
+      ! figure out size of the box
+      IF (SUM(cell%perd) /= SUM(eri_env%periodicity)) THEN
+         ! enter here only for obc-in-pbc
+         IF (SUM(eri_env%periodicity) == 0) THEN
+            max_cell_dim = cell%hmat(1, 1)
+            DO iwa1 = 2, 3
+               max_cell_dim = MAX(max_cell_dim, cell%hmat(iwa1, iwa1))
+            END DO
+            max_cell_dim = max_cell_dim*2.0_dp
+            WRITE (UNIT=iw, FMT="(/,T2,A,T66,F15.6)") &
+                     "New max cell dimensions for GPW integrals", max_cell_dim
+            old_hmat = cell%hmat
+            DO iwa1 = 1, 3
+               cell%hmat(iwa1, iwa1) = max_cell_dim
+            END DO
+         END IF
+      END IF
 
       relative_cutoff_old = dft_control%qs_control%relative_cutoff
       dft_control%qs_control%relative_cutoff = eri_env%eri_gpw%rel_cutoff*0.5_dp
@@ -1282,12 +1301,13 @@ CONTAINS
          IF (eri_env%cutoff_radius > 0.0_dp) THEN
             poisson_env%green_fft%radius = eri_env%cutoff_radius
          ELSE
-            CALL get_qs_env(qs_env, cell=cell)
             rc = cell%hmat(1, 1)
             DO iwa1 = 1, 3
                rc = MIN(rc, 0.5_dp*cell%hmat(iwa1, iwa1))
             END DO
             poisson_env%green_fft%radius = rc
+            WRITE (UNIT=iw, FMT="(/,T2,A,T71,F10.4)") &
+                     "ERI_GPW| Poisson cutoff radius", rc
          END IF
 
          CALL pw_eri_green_create(poisson_env%green_fft, eri_env)
@@ -1404,12 +1424,6 @@ CONTAINS
                ! calculate charge distribution and potential
                CALL pw_zero(rho_r)
                CALL pw_multiply(rho_r, wfn1, wfn2)
-               IF (print2 .AND. iw > 0) THEN
-                  ! TODO: this call hangs in parallel
-                  erint = pw_integrate_function(rho_r)/dvol
-                  WRITE (iw, "(T4,'ERI_GPW| Integral rho_ab ',T32,2I4,' [',I1,']',T58,G20.14)") &
-                     iwa1, iwa2, isp1, erint
-               END IF
                CALL pw_transfer(rho_r, rho_g)
                CALL pw_poisson_solve(poisson_env, rho_g, pair_int, pot_g)
                ! screening using pair_int
@@ -1498,6 +1512,7 @@ CONTAINS
       dft_control%qs_control%e_cutoff = e_cutoff_old
       dft_control%qs_control%cutoff = cutoff_old
       dft_control%qs_control%relative_cutoff = relative_cutoff_old
+      cell%hmat = old_hmat
       DEALLOCATE (e_cutoff_old)
 
       CALL timestop(handle)
