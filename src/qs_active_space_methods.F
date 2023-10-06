@@ -22,6 +22,7 @@ MODULE qs_active_space_methods
                               srules, &
                               sto_basis_set_type
    USE cell_types, ONLY: cell_type
+   USE cell_methods, ONLY: init_cell
    USE cp_blacs_env, ONLY: cp_blacs_env_type
    USE cp_control_types, ONLY: dft_control_type
    USE cp_dbcsr_operations, ONLY: cp_dbcsr_plus_fm_fm_t, &
@@ -1204,7 +1205,7 @@ CONTAINS
                                                             progression_factor, rc, &
                                                             relative_cutoff_old, rsize, max_cell_dim
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_cutoff_old, eri
-      REAL(KIND=dp), DIMENSION(3,3)                      :: old_hmat
+      REAL(KIND=dp), DIMENSION(3,3)                      :: old_hmat, new_hmat
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
@@ -1278,12 +1279,12 @@ CONTAINS
             END IF
             old_hmat = cell%hmat(:, :)
             DO iwa1 = 1, 3
-               cell%hmat(iwa1, iwa1) = max_cell_dim
+               new_hmat(iwa1, iwa1) = max_cell_dim
             END DO
          END IF
       END IF
 
-
+      CALL init_cell(cell, new_hmat)
       relative_cutoff_old = dft_control%qs_control%relative_cutoff
       dft_control%qs_control%relative_cutoff = eri_env%eri_gpw%rel_cutoff*0.5_dp
 
@@ -1524,7 +1525,7 @@ CONTAINS
       dft_control%qs_control%e_cutoff = e_cutoff_old
       dft_control%qs_control%cutoff = cutoff_old
       dft_control%qs_control%relative_cutoff = relative_cutoff_old
-      cell%hmat = old_hmat(:,:)
+      CALL init_cell(cell, old_hmat)
       DEALLOCATE (e_cutoff_old)
 
       CALL timestop(handle)
