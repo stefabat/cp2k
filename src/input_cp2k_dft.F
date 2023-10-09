@@ -9334,11 +9334,16 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
-      CALL keyword_create( &
-         keyword, __LOCATION__, name="EPS_INTEGRAL", &
-         description="Accuracy of ERIs that will be stored.", &
-         usage="EPS_FILTER 1.0E-10 ", type_of_var=real_t, &
-         default_r_val=1.0E-12_dp)
+      CALL keyword_create( keyword, __LOCATION__, name="EPS_INTEGRAL", &
+                           description="Accuracy of ERIs that will be stored.", &
+                           usage="EPS_FILTER 1.0E-10 ", type_of_var=real_t, &
+                           default_r_val=1.0E-12_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="ENLARGE_CELL", &
+                          description="Whether to enlarge the cell for computing the integrals", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.FALSE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
