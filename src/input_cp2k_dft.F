@@ -9418,7 +9418,7 @@ CONTAINS
 
       CALL keyword_create(keyword, __LOCATION__, name="PERIODICITY", &
                           description="Periodicity used for operators in ERI calclulation.", &
-                          usage="PERIODICITY {1 1 1}", n_var=-1, default_i_vals=(/1, 1, 1/), &
+                          usage="PERIODICITY {1 1 1}", n_var=-1, default_i_vals=(/0, 0, 0/), &
                           type_of_var=integer_t)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
@@ -9432,8 +9432,8 @@ CONTAINS
 
       CALL keyword_create( keyword, __LOCATION__, name="EPS_INTEGRAL", &
                            description="Accuracy of ERIs that will be stored.", &
-                           usage="EPS_FILTER 1.0E-10 ", type_of_var=real_t, &
-                           default_r_val=1.0E-12_dp)
+                           usage="EPS_FILTER 1.0E-8", type_of_var=real_t, &
+                           default_r_val=1.0E-10_dp)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
