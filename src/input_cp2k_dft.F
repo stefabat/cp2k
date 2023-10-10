@@ -9424,7 +9424,7 @@ CONTAINS
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="CUTOFF_RADIUS", &
-                          description="Radius of operator interactions in non-periodic cases.", &
+                          description="Radius (in Angstrom) of operator interactions in non-periodic cases.", &
                           usage="CUTOFF_RADIUS 20", type_of_var=real_t, &
                           default_r_val=-1.0_dp)
       CALL section_add_keyword(section, keyword)
