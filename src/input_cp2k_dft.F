@@ -68,7 +68,8 @@ MODULE input_cp2k_dft
       ehrenfest, embed_diff, embed_fa, embed_grid_angstrom, embed_grid_bohr, embed_level_shift, &
       embed_none, embed_quasi_newton, embed_resp, embed_steep_desc, eri_method_full_gpw, &
       eri_method_gpw_ht, eri_operator_coulomb, eri_operator_erf, eri_operator_erfc, &
-      eri_operator_gaussian, eri_operator_yukawa, gapw_1c_large, gapw_1c_medium, gapw_1c_orb, &
+      eri_operator_gaussian, eri_operator_yukawa, eri_poisson_analytic, eri_poisson_periodic, &
+      eri_poisson_mt, gapw_1c_large, gapw_1c_medium, gapw_1c_orb, &
       gapw_1c_small, gapw_1c_very_large, gaussian, general_roks, gto_cartesian, gto_spherical, &
       hf_model, high_spin_roks, history_guess, jacobian_fd1, jacobian_fd1_backward, &
       jacobian_fd1_central, jacobian_fd2, jacobian_fd2_backward, kg_color_dsatur, &
@@ -9375,13 +9376,14 @@ CONTAINS
       TYPE(section_type), POINTER                        :: section
 
       TYPE(keyword_type), POINTER                        :: keyword
+      TYPE(section_type), POINTER                        :: subsection
 
       CPASSERT(.NOT. ASSOCIATED(section))
       CALL section_create(section, __LOCATION__, name="ERI", &
                           description="Parameters for the electron repulsion integrals.", &
                           n_keywords=5, n_subsections=0, repeats=.FALSE.)
 
-      NULLIFY (keyword)
+      NULLIFY (keyword, subsection)
       CALL keyword_create(keyword, __LOCATION__, name="METHOD", &
                           description="Method used in ERI calculation.", &
                           usage="METHOD FULL_GPW", &
@@ -9443,7 +9445,70 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="POISSON_SOLVER", &
+                          description="Poisson solver used in ERI calculation.", &
+                          usage="POISSON_SOLVER ANALYTIC", &
+                          enum_c_vals=s2a("ANALYTIC", "PERIODIC", "MT"), &
+                          enum_i_vals=(/eri_poisson_analytic, eri_poisson_periodic, eri_poisson_mt/), &
+                          enum_desc=s2a("Use the ANALYTIC poisson solver, only for 0D", &
+                                        "Use the PERIODIC poisson solver, only for 3D", &
+                                        "Use the Martyna-Tuckermann poisson solver, only for 0D"), &
+                          default_i_val=eri_poisson_analytic)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="ERI_CELL", &
+                          description="Specify the lengths of the cell vectors A, B, and C, which"// &
+                          " defines the diagonal elements of h matrix for an orthorhombic cell."// &
+                          " This new cell is used for the calculation of the two-electron integrals.", &
+                          usage="ERI_CELL 10.000 10.000 10.000", unit_str="angstrom", &
+                          n_var=3, type_of_var=real_t, repeats=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL create_mt_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
    END SUBROUTINE create_eri_section
+
+! **************************************************************************************************
+!> \brief Creates the Martyna-Tuckerman section
+!> \param section the section to create
+!> \author teo
+! **************************************************************************************************
+   SUBROUTINE create_mt_section(section)
+      TYPE(section_type), POINTER                        :: section
+
+      TYPE(keyword_type), POINTER                        :: keyword
+
+      CPASSERT(.NOT. ASSOCIATED(section))
+      CALL section_create(section, __LOCATION__, name="mt", &
+                          description="Sets up parameters of  Martyna-Tuckerman poisson solver. "// &
+                          "Note that exact results are only guaranteed if the unit cell is "// &
+                          "twice as large as charge density (and serious artefacts can result "// &
+                          "if the cell is much smaller).", &
+                          n_keywords=1, n_subsections=0, repeats=.FALSE.)
+
+      NULLIFY (keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="ALPHA", &
+                          description="Convergence parameter ALPHA*RMIN. Default value 7.0", &
+                          usage="ALPHA real", &
+                          n_var=1, default_r_val=7.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="REL_CUTOFF", &
+                          description="Specify the multiplicative factor for the CUTOFF keyword in MULTI_GRID "// &
+                          " section. The result gives the cutoff at which the 1/r non-periodic FFT3D is evaluated."// &
+                          "Default is 2.0", &
+                          usage="REL_CUTOFF real", &
+                          n_var=1, default_r_val=2.0_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+   END SUBROUTINE create_mt_section
 
 ! **************************************************************************************************
 !> \brief ...

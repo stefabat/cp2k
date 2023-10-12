@@ -1222,6 +1222,10 @@ MODULE input_constants
                                                eri_operator_erfc = 4, &
                                                eri_operator_gaussian = 5
 
+   INTEGER, PARAMETER, PUBLIC               :: eri_poisson_analytic = 1, &
+                                               eri_poisson_periodic = 2, &
+                                               eri_poisson_mt = 3
+
    INTEGER, PARAMETER, PUBLIC               :: do_eri_gpw = 0, &
                                                do_eri_mme = 1, &
                                                do_eri_os = 2, &
