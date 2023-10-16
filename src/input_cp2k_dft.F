@@ -9366,7 +9366,8 @@ CONTAINS
                           " defines the diagonal elements of h matrix for an orthorhombic cell."// &
                           " This new cell is used for the calculation of the two-electron integrals.", &
                           usage="ERI_CELL 10.000 10.000 10.000", unit_str="angstrom", &
-                          n_var=3, type_of_var=real_t, repeats=.FALSE.)
+                          n_var=3, type_of_var=real_t, default_r_vals=(/0.0_dp, 0.0_dp, 0.0_dp/), &
+                          repeats=.FALSE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
@@ -9387,7 +9388,7 @@ CONTAINS
       TYPE(keyword_type), POINTER                        :: keyword
 
       CPASSERT(.NOT. ASSOCIATED(section))
-      CALL section_create(section, __LOCATION__, name="mt", &
+      CALL section_create(section, __LOCATION__, name="MT", &
                           description="Sets up parameters of  Martyna-Tuckerman poisson solver. "// &
                           "Note that exact results are only guaranteed if the unit cell is "// &
                           "twice as large as charge density (and serious artefacts can result "// &
