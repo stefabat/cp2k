@@ -9467,6 +9467,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="ERI_CELL_ANGLES", &
+                          description="Specify the angles between the vectors A, B and C when using the ABC keyword. "// &
+                          " This new cell is used for the calculation of the two-electron integrals.", &
+                          usage="ERI_CELL_ANGLES [deg] 90.0 90.0 120.0", unit_str="deg", &
+                          n_var=3, default_r_vals=(/cp_unit_to_cp2k(value=90.0_dp, unit_str="deg"), &
+                                                    cp_unit_to_cp2k(value=90.0_dp, unit_str="deg"), &
+                                                    cp_unit_to_cp2k(value=90.0_dp, unit_str="deg")/), &
+                          repeats=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL create_mt_section(subsection)
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
