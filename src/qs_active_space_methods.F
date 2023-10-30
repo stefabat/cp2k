@@ -22,7 +22,7 @@ MODULE qs_active_space_methods
                               srules, &
                               sto_basis_set_type
    USE cell_types, ONLY: cell_type, use_perd_none, use_perd_xyz
-   USE cell_methods, ONLY: init_cell
+   USE cell_methods, ONLY: init_cell, set_cell_param, write_cell_low
    USE cp_blacs_env, ONLY: cp_blacs_env_type
    USE cp_control_types, ONLY: dft_control_type
    USE cp_dbcsr_operations, ONLY: cp_dbcsr_plus_fm_fm_t, &
@@ -212,7 +212,7 @@ CONTAINS
       REAL(KIND=dp) :: eri_eps_grid, eri_eps_int, eri_gpw_cutoff, eri_op_param, eri_rcut, &
          eri_rel_cutoff, fel, focc, maxocc, nze_percentage, mt_alpha, mt_rel_cutoff
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: eigenvalues
-      REAL(KIND=dp), DIMENSION(:), POINTER               :: evals_virtual, eri_cell
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: evals_virtual, eri_cell, eri_cell_angles
       TYPE(active_space_type), POINTER                   :: active_space_env
       TYPE(cp_blacs_env_type), POINTER                   :: context
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
@@ -813,6 +813,8 @@ CONTAINS
       END IF
       CALL section_vals_val_get(as_input, "ERI%ERI_CELL", r_vals=eri_cell)
       active_space_env%eri%eri_cell(1:3) = eri_cell(1:3)
+      CALL section_vals_val_get(as_input, "ERI%ERI_CELL_ANGLES", r_vals=eri_cell_angles)
+      active_space_env%eri%eri_cell_angles(1:3) = eri_cell_angles(1:3)
 
       ! mt specific parameters
       CALL section_vals_val_get(as_input, "ERI%MT%ALPHA", r_val=mt_alpha)
@@ -1194,6 +1196,7 @@ CONTAINS
       LOGICAL                                            :: print1, print2, &
                                                             skip_load_balance_distributed
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: e_cutoff_old, eri
+      REAL(KIND=dp), DIMENSION(3)                        :: eri_cell_angles = 90.0_dp
       REAL(KIND=dp), DIMENSION(3,3)                      :: old_hmat, new_hmat = 0.0_dp
       INTEGER, DIMENSION(3)                              :: old_perd = 0
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
@@ -1257,21 +1260,25 @@ CONTAINS
                                                         /progression_factor
       END DO
 
-      ! modify cell size according to input
-      IF (SUM(eri_env%eri_cell) > 0.0_dp) THEN
-         DO iwa1 = 1, 3
-            new_hmat(iwa1, iwa1) = eri_env%eri_cell(iwa1)
-         END DO
-      ELSE ! trivially copy the existing cell
-         new_hmat = cell%hmat(:, :)
-      END IF
-
       ! save old cell info
       old_hmat = cell%hmat(:, :)
       old_perd = cell%perd(:)
 
+      ! modify cell size according to input and
       ! set temporary cell for gpw eri calculation
-      CALL init_cell(cell, new_hmat, eri_env%periodicity)
+      IF (SUM(eri_env%eri_cell) > 0.0_dp) THEN
+         IF (SUM(eri_env%eri_cell_angles) > 0.0_dp) THEN
+            CALL set_cell_param(cell, eri_env%eri_cell, eri_env%eri_cell_angles, eri_env%periodicity, do_init_cell=.TRUE.)
+         ELSE
+            CALL set_cell_param(cell, eri_env%eri_cell, eri_cell_angles, eri_env%periodicity, do_init_cell=.TRUE.)
+         END IF
+      ELSE ! trivially copy the existing cell
+         new_hmat = cell%hmat(:, :)
+         ! we need to re-initialize the cell here
+         CALL init_cell(cell, new_hmat, eri_env%periodicity)
+      END IF
+      ! TODO: maybe there is a cleaner way to do all of the above via
+      ! the set_cell_param subroutine...
 
       ! to deprecate
       ! enlarge_cell is exclusive with eri_cell
@@ -1299,8 +1306,9 @@ CONTAINS
 
       ! print info on the cell dimension for the GPW integrals
       IF (iw > 0) THEN
-         WRITE (UNIT=iw, FMT="(T2,A,T57,3F8.2)") "ERI_GPW| Cell parameters (abc) used for ERI", &
-            (cell%hmat(iwa1,iwa1)*angstrom, iwa1=1,3)
+         CALL write_cell_low(cell, "angstrom", iw, "ERI_CELL|")
+         !WRITE (UNIT=iw, FMT="(T2,A,T57,3F8.2)") "ERI_GPW| Cell parameters (abc) used for ERI", &
+         !   (cell%hmat(iwa1,iwa1)*angstrom, iwa1=1,3)
       END IF
 
       relative_cutoff_old = dft_control%qs_control%relative_cutoff
