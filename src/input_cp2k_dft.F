@@ -1073,6 +1073,18 @@ CONTAINS
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 
+      CALL section_create(subsection, __LOCATION__, name="TREXIO", &
+                          description="Write a TREXIO file to disk.", &
+                          n_keywords=1, n_subsections=0, repeats=.FALSE.)
+      CALL keyword_create(keyword, __LOCATION__, name="FILENAME", &
+                          description="Body of Filename for the trexio file.", &
+                          usage="FILENAME {name}", default_c_val="TREXIO", &
+                          type_of_var=char_t)
+      CALL section_add_keyword(subsection, keyword)
+      CALL keyword_release(keyword)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
       CALL create_mo_cubes_section(print_key)
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
