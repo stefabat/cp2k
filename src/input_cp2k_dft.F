@@ -1078,7 +1078,7 @@ CONTAINS
                           n_keywords=1, n_subsections=0, repeats=.FALSE.)
       CALL keyword_create(keyword, __LOCATION__, name="FILENAME", &
                           description="Body of Filename for the trexio file.", &
-                          usage="FILENAME {name}", default_c_val="TREXIO", &
+                          usage="FILENAME {name}", default_c_val="", &
                           type_of_var=char_t)
       CALL section_add_keyword(subsection, keyword)
       CALL keyword_release(keyword)
