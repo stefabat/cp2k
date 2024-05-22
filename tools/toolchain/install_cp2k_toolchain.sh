@@ -217,7 +217,7 @@ The --with-PKG options follow the rules:
   --with-spglib           Enable the spg library (search of symmetry groups)
                           This package depends on cmake.
                           Default = install
-  --with-hdf5             Enable the hdf5 library (used by the sirius library)
+  --with-hdf5             Enable the hdf5 library (used by the sirius and trexio libraries)
                           Default = install
   --with-spfft            Enable the spare fft used in SIRIUS (hard dependency)
                           Default = install
@@ -228,6 +228,8 @@ The --with-PKG options follow the rules:
   --with-libvori          Enable libvori for the Voronoi integration (and the BQB compressed trajectory format)
                           Default = install
   --with-libtorch         Enable libtorch the machine learning framework needed for NequIP and Allegro
+                          Default = no
+  --with-trexio           Enable the trexio library (read/write TREXIO files)
                           Default = no
 
 FURTHER INSTRUCTIONS
@@ -266,7 +268,7 @@ mpi_list="mpich openmpi intelmpi"
 math_list="mkl acml openblas"
 lib_list="fftw libint libxc libgrpp libxsmm cosma scalapack elpa cusolvermp plumed \
           spfft spla ptscotch superlu pexsi quip gsl spglib hdf5 libvdwxc sirius
-          libvori libtorch deepmd"
+          libvori libtorch deepmd trexio"
 package_list="${tool_list} ${mpi_list} ${math_list} ${lib_list}"
 # ------------------------------------------------------------------------
 
@@ -307,6 +309,7 @@ with_sirius="__INSTALL__"
 with_gsl="__DONTUSE__"
 with_spglib="__INSTALL__"
 with_hdf5="__DONTUSE__"
+with_trexio="__DONTUSE__"
 with_elpa="__INSTALL__"
 with_cusolvermp="__DONTUSE__"
 with_libvdwxc="__DONTUSE__"
@@ -650,6 +653,9 @@ while [ $# -ge 1 ]; do
     --with-spla*)
       with_spla=$(read_with "${1}")
       ;;
+    --with-trexio*)
+      with_trexio=$(read_with "${1}")
+      ;;
     --help*)
       show_help
       exit 0
@@ -809,6 +815,10 @@ if [ "${with_sirius}" = "__INSTALL__" ]; then
   [ "${with_hdf5}" = "__DONTUSE__" ] && with_hdf5="__INSTALL__"
   [ "${with_libvdwxc}" = "__DONTUSE__" ] && with_libvdwxc="__INSTALL__"
   [ "${with_cosma}" = "__DONTUSE__" ] && with_cosma="__INSTALL__"
+fi
+
+if [ "${with_trexio}" = "__INSTALL__" ]; then
+  [ "${with_hdf5}" = "__DONTUSE__" ] && with_hdf5="__INSTALL__"
 fi
 
 if [ "${with_plumed}" = "__INSTALL__" ]; then
