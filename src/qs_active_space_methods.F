@@ -2386,14 +2386,14 @@ CONTAINS
       REAL(KIND=dp)                                      :: eeri, eref, esub, mval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: ks_a_mat, ks_a_ref, ks_b_mat, ks_b_ref, &
                                                             ks_mat, ks_ref, p_a_mat, p_b_mat, p_mat
-      TYPE(cp_fm_type), POINTER                          :: matrix, mo_coef
+      TYPE(cp_fm_type), POINTER                          :: matrix
       TYPE(dbcsr_csr_type), POINTER                      :: eri, eri_aa, eri_ab, eri_bb
 
       eref = active_space_env%energy_ref
       nspins = active_space_env%nspins
 
       IF (nspins == 1) THEN
-         CALL get_mo_set(active_space_env%mos_active(1), nmo=norb, mo_coeff=mo_coef)
+         CALL get_mo_set(active_space_env%mos_active(1), nmo=norb)
          !
          ! Loop over ERI, calculate subspace HF energy and Fock matrix
          !
@@ -3020,7 +3020,7 @@ CONTAINS
       CALL para_env%sync()
 
       ! send two-electron integrals to the client
-      CALL send_eri_to_client(client_fd, active_space_env, para_env)
+      CALL send_eri_to_client(client_fd, qs_env)
 
       ! get pointer to density in ao basis
       CALL get_qs_env(qs_env, rho=rho, energy=energy, ks_env=ks_env)
@@ -3245,29 +3245,64 @@ CONTAINS
 !> \param active_space_env active space environment
 !> \param para_env parallel environment
 ! **************************************************************************************************
-   SUBROUTINE send_eri_to_client(client_fd, active_space_env, para_env)
+   SUBROUTINE send_eri_to_client(client_fd, qs_env)
       INTEGER, INTENT(IN)                                :: client_fd
-      TYPE(active_space_type), INTENT(IN), POINTER       :: active_space_env
-      TYPE(mp_para_env_type), INTENT(IN), POINTER        :: para_env
+      TYPE(qs_environment_type), INTENT(IN), POINTER     :: qs_env
 
       CHARACTER(len=*), PARAMETER :: routineN = 'send_eri_to_client'
       INTEGER, PARAMETER                                 :: header_len = 12
 
       CHARACTER(len=default_string_length)               :: header
-      INTEGER                                            :: handle, iw
+      INTEGER                                            :: handle, iw, nao, nrow_global, ncol_global, i
       LOGICAL                                            :: ionode
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eri_aa, eri_ab, eri_bb, s_ab
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eri_aa, eri_ab, eri_bb, s_ab, s_ao, mos_a, mos_b
       TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: s_matrix
+      TYPE(active_space_type), POINTER                   :: active_space_env
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
+      TYPE(cp_fm_type)                                   :: fm_s_matrix
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
 
       CALL timeset(routineN, handle)
 
       logger => cp_get_default_logger()
       iw = cp_logger_get_default_io_unit(logger)
+
+      CALL get_qs_env(qs_env, active_space=active_space_env, para_env=para_env, &
+                      matrix_s=s_matrix, blacs_env=blacs_env)
       ionode = para_env%is_source()
 
       ALLOCATE (eri_aa(active_space_env%nmo_active**4))
       CALL eri_to_array(active_space_env%eri, eri_aa, active_space_env%active_orbitals, 1, 1)
+      
+      ! get the overlap_ab matrix into Fortran array
+      CALL get_mo_set(active_space_env%mos_active(1), mo_coeff=mo_coeff, nao=nao)
+      ALLOCATE (mos_a(nao*active_space_env%nmo_active))
+      ! CALL cp_fm_write_formatted(mo_coeff, iw)
+      ASSOCIATE (act_indices_a => active_space_env%active_orbitals(:, 1))
+         CALL subspace_matrix_to_array(mo_coeff, mos_a, [(i, i=1, nao)], act_indices_a)
+      END ASSOCIATE
+
+      CALL dbcsr_get_info(s_matrix(1)%matrix, nfullrows_total=nrow_global, nfullcols_total=ncol_global)
+      NULLIFY (fm_struct)
+      CALL cp_fm_struct_create(fm_struct, context=blacs_env, para_env=para_env, &
+                               nrow_global=nrow_global, ncol_global=ncol_global)
+      CALL cp_fm_create(fm_s_matrix, fm_struct)
+      CALL cp_fm_struct_release(fm_struct)
+      CALL copy_dbcsr_to_fm(s_matrix(1)%matrix, fm_s_matrix)
+      
+      ! CALL cp_fm_write_formatted(fm_s_matrix, iw)
+
+      ALLOCATE (s_ao(nao**2))
+      CALL subspace_matrix_to_array(fm_s_matrix, s_ao, [(i, i=1, nao)], [(i, i=1, nao)])
+      CALL cp_fm_release(fm_s_matrix)
+
       IF (active_space_env%nspins == 2) THEN
+         CALL get_mo_set(active_space_env%mos_active(2), mo_coeff=mo_coeff, nao=nao)
+         ALLOCATE (mos_b(nao*active_space_env%nmo_active))
+         
          ALLOCATE (eri_ab(active_space_env%nmo_active**4))
          CALL eri_to_array(active_space_env%eri, eri_ab, active_space_env%active_orbitals, 1, 2)
          ALLOCATE (eri_bb(active_space_env%nmo_active**4))
@@ -3276,7 +3311,10 @@ CONTAINS
          ALLOCATE (s_ab(active_space_env%nmo_active**2))
          ASSOCIATE (act_indices_a => active_space_env%active_orbitals(:, 1), &
                     act_indices_b => active_space_env%active_orbitals(:, 2))
+            ! store the ab overlap matrix
             CALL subspace_matrix_to_array(active_space_env%sab_sub(1), s_ab, act_indices_a, act_indices_b)
+            ! store the beta coefficients
+            CALL subspace_matrix_to_array(mo_coeff, mos_b, [(i, i=1, nao)], act_indices_b)
          END ASSOCIATE
       END IF
 
@@ -3298,17 +3336,21 @@ CONTAINS
             CALL para_env%sync()
             IF (ionode) THEN
                CALL writebuffer(client_fd, "TWOBODY     ", header_len)
+               CALL writebuffer(client_fd, nao)
                CALL writebuffer(client_fd, active_space_env%nspins)
                CALL writebuffer(client_fd, active_space_env%nmo_active)
                CALL writebuffer(client_fd, active_space_env%nelec_active)
                CALL writebuffer(client_fd, active_space_env%multiplicity)
                ! send the alpha component
                CALL writebuffer(client_fd, eri_aa, SIZE(eri_aa))
+               CALL writebuffer(client_fd, mos_a, SIZE(mos_a))
+               CALL writebuffer(client_fd, s_ao, SIZE(s_ao))
                ! send the beta part for unrestricted calculations
                IF (active_space_env%nspins == 2) THEN
                   CALL writebuffer(client_fd, eri_ab, SIZE(eri_ab))
                   CALL writebuffer(client_fd, eri_bb, SIZE(eri_bb))
                   CALL writebuffer(client_fd, s_ab, SIZE(s_ab))
+                  CALL writebuffer(client_fd, mos_b, SIZE(mos_b))
                END IF
             END IF
          ELSE IF (TRIM(header) == "RECEIVED") THEN
@@ -3317,10 +3359,13 @@ CONTAINS
       END DO
 
       DEALLOCATE (eri_aa)
+      DEALLOCATE (s_ao)
+      DEALLOCATE (mos_a)
       IF (active_space_env%nspins == 2) THEN
          DEALLOCATE (eri_ab)
          DEALLOCATE (eri_bb)
          DEALLOCATE (s_ab)
+         DEALLOCATE (mos_b)
       END IF
 
       CALL para_env%sync()
