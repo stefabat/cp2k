@@ -3253,9 +3253,10 @@ CONTAINS
       INTEGER, PARAMETER                                 :: header_len = 12
 
       CHARACTER(len=default_string_length)               :: header
-      INTEGER                                            :: handle, iw, nao, nrow_global, ncol_global, i
+      INTEGER                                            :: handle, iw, nao, nrow_global, ncol_global, i, j
       LOGICAL                                            :: ionode
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eri_aa, eri_ab, eri_bb, s_ab, s_ao, mos_a, mos_b
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: eri_aa, eri_ab, eri_bb, s_ab, mos_a, mos_b, s_ao
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: s_ao_row
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: s_matrix
       TYPE(active_space_type), POINTER                   :: active_space_env
@@ -3293,10 +3294,26 @@ CONTAINS
       CALL cp_fm_struct_release(fm_struct)
       CALL copy_dbcsr_to_fm(s_matrix(1)%matrix, fm_s_matrix)
       
-      ! CALL cp_fm_write_formatted(fm_s_matrix, iw)
+      ! allocate big matrix only on ionode
+      IF (ionode) THEN
+         ALLOCATE (s_ao(nao**2))
+      END IF
 
-      ALLOCATE (s_ao(nao**2))
-      CALL subspace_matrix_to_array(fm_s_matrix, s_ao, [(i, i=1, nao)], [(i, i=1, nao)])
+      ! one batch is one row
+      ALLOCATE (s_ao_row(nao))
+
+      DO i=1, nao
+         ! access by row because fm_s_matrix is distributed by rows
+         CALL subspace_matrix_to_array(fm_s_matrix, s_ao_row, [(i)], [(j, j=1, nao)])
+
+         IF (ionode) THEN
+            ! s_ao is expected to be in column major order, but here we do it row-major
+            ! this is fine because the overlap is symmetric
+            s_ao( (i-1)*nao + 1: i*nao) = s_ao_row(1:nao)
+         END IF
+      END DO
+
+      DEALLOCATE (s_ao_row)
       CALL cp_fm_release(fm_s_matrix)
 
       IF (active_space_env%nspins == 2) THEN
@@ -3358,8 +3375,8 @@ CONTAINS
          END IF
       END DO
 
+      IF (ionode) DEALLOCATE (s_ao)
       DEALLOCATE (eri_aa)
-      DEALLOCATE (s_ao)
       DEALLOCATE (mos_a)
       IF (active_space_env%nspins == 2) THEN
          DEALLOCATE (eri_ab)
